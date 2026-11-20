@@ -266,38 +266,119 @@ class NovelLocalIndexer {
     );
   }
 
-  /// 在全书内按关键词检索带章号和前后上下文的原文证据（类 grep -C）
+  /// 在全书内按关键词检索带章号和前后上下文的原文证据（支持精准短语 + 空格分词多词打分 + 章号过滤）
   List<GrepEvidence> grep(
     String keyword, {
     int maxHits = 3,
     bool fromEnd = true,
-    int radiusBefore = 110,
-    int radiusAfter = 210,
+    int radiusBefore = 220,
+    int radiusAfter = 280,
   }) {
     final kw = keyword.trim();
     if (kw.isEmpty || chapters.isEmpty) return const [];
 
-    final hits = <GrepEvidence>[];
+    // 1) 优先精确子串命中
+    final exactHits = <GrepEvidence>[];
     final ordered = fromEnd ? chapters.reversed : chapters;
     for (final ch in ordered) {
       final pos = ch.body.indexOf(kw);
       if (pos == -1) continue;
-      final start = (pos - radiusBefore).clamp(0, ch.body.length);
-      final end = (pos + kw.length + radiusAfter).clamp(0, ch.body.length);
-      final snippet = ch.body
-          .substring(start, end)
-          .replaceAll(RegExp(r'\s+'), ' ')
-          .trim();
-      hits.add(
-        GrepEvidence(
-          chapterNo: ch.chapterNo,
-          chapterTitle: ch.title,
-          snippet: snippet,
-        ),
-      );
-      if (hits.length >= maxHits) break;
+      exactHits.add(_makeEvidence(ch, pos, kw.length, radiusBefore, radiusAfter));
+      if (exactHits.length >= maxHits) return exactHits;
     }
-    return hits;
+    if (exactHits.isNotEmpty) return exactHits;
+
+    // 2) 多词/空格分隔查询智能回退（如 "爱丽丝 第1章 发色 衣服" / "罗娜 最后 形态"）
+    final rawTokens = kw
+        .split(RegExp(r'[\s,，、/|+]+'))
+        .map((e) => e.trim())
+        .where((e) => e.isNotEmpty)
+        .toList();
+    if (rawTokens.length <= 1) return const [];
+
+    // 提取可选章号提示（如 "第1章" / "第250章"）
+    int? targetChapterNo;
+    final searchTokens = <String>[];
+    for (final t in rawTokens) {
+      final chNum = StyleChapterSampler.markerNumber(t);
+      if (chNum != null) {
+        targetChapterNo = chNum;
+      } else if (t.length >= 2) {
+        searchTokens.add(t);
+      }
+    }
+    if (searchTokens.isEmpty) return const [];
+
+    // 按命中词数量 + 锚点词稀有度打分（过滤出至少命中一个词的章节）
+    final scored = <({IndexedChapter ch, int score, int anchorPos, int anchorLen})>[];
+    final primaryToken = searchTokens.first;
+
+    for (final ch in chapters) {
+      var score = 0;
+      var anchorPos = -1;
+      var anchorLen = 0;
+
+      if (targetChapterNo != null && ch.chapterNo == targetChapterNo) {
+        score += 4;
+      }
+      for (var i = 0; i < searchTokens.length; i++) {
+        final t = searchTokens[i];
+        final p = ch.body.indexOf(t);
+        if (p != -1) {
+          // 首词（通常是人名/核心实体）权重最高
+          score += (i == 0) ? 5 : 2;
+          if (anchorPos == -1 || t == primaryToken) {
+            anchorPos = p;
+            anchorLen = t.length;
+          }
+        }
+      }
+      if (anchorPos != -1 && score >= 4) {
+        scored.add((ch: ch, score: score, anchorPos: anchorPos, anchorLen: anchorLen));
+      }
+    }
+
+    if (scored.isEmpty) return const [];
+    scored.sort((a, b) {
+      final cmp = b.score.compareTo(a.score);
+      if (cmp != 0) return cmp;
+      return fromEnd
+          ? b.ch.chapterNo.compareTo(a.ch.chapterNo)
+          : a.ch.chapterNo.compareTo(b.ch.chapterNo);
+    });
+
+    return scored
+        .take(maxHits)
+        .map(
+          (e) => _makeEvidence(
+            e.ch,
+            e.anchorPos,
+            e.anchorLen,
+            radiusBefore,
+            radiusAfter,
+          ),
+        )
+        .toList();
+  }
+
+  static GrepEvidence _makeEvidence(
+    IndexedChapter ch,
+    int pos,
+    int matchLen,
+    int radiusBefore,
+    int radiusAfter,
+  ) {
+    final start = (pos - radiusBefore).clamp(0, ch.body.length);
+    final end = (pos + matchLen + radiusAfter).clamp(0, ch.body.length);
+    final snippet = ch.body
+        .substring(start, end)
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .trim();
+    return GrepEvidence(
+      chapterNo: ch.chapterNo,
+      chapterTitle: ch.title,
+      snippet: snippet,
+    );
   }
 
   /// 首现 + 末现混合检索：既拿到设定起源，又拿到最新状态（最适合考证伏笔与角色演变）

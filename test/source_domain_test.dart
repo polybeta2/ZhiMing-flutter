@@ -71,6 +71,10 @@ void main() {
       final hits = indexer.grepSpan('银色怀表');
       expect(hits.length, 1);
       expect(hits.first.chapterNo, 1);
+      // 多词空格查询 + 章号过滤智能回退（命中章号与多词的 Ch 2 应排第一）
+      final multiHits = indexer.grep('月莲 第2章 蠢猫 退休');
+      expect(multiHits, isNotEmpty);
+      expect(multiHits.first.chapterNo, 2);
       final prefix = indexer.buildEvidenceStaticPrefix(
         title: '测试小说',
         isContinuation: true,

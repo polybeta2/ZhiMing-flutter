@@ -45,7 +45,7 @@ class StyleDistillationService {
     required this.library,
     this.providerExtra,
     this.temperature = 0.4,
-    this.maxTokens = 8000,
+    this.maxTokens = 12288,
   });
 
   final LLMClient client;
@@ -224,7 +224,7 @@ class StyleDistillationService {
       final fixBuf = StringBuffer();
       await for (final ev in client.streamChat(
         fixMsgs,
-        config: GenerationConfig(temperature: 0.5, maxTokens: 4000),
+        config: const GenerationConfig(temperature: 0.5, maxTokens: 12288),
         cancelToken: cancelToken,
       )) {
         yield StyleDistillStreamDelta(ev);
@@ -394,7 +394,7 @@ class StyleEvaluator {
     final raw = StringBuffer();
     await for (final ev in client.streamChat(
       msgs,
-      config: const GenerationConfig(temperature: 0.2, maxTokens: 4000),
+      config: const GenerationConfig(temperature: 0.2, maxTokens: 12288),
       cancelToken: cancelToken,
     )) {
       onEvent?.call(ev);

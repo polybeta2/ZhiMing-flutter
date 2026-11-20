@@ -592,14 +592,24 @@ class CreationSessionEngine {
         existingNames.add(name);
       }
 
-      // 卷与章（保留续写原作卷，仅追加/新建蓝图卷；全新书则清空重建）
+      // 卷与章（保留续写原作卷与已写有内容的卷；自动清理空白占位卷，避免落库后残留空「第一卷」）
       final existingVols = await db.getVolumes(novelId);
-      var baseVolOrder = 0;
-      if (existingVols.isEmpty) {
-        baseVolOrder = 0;
-      } else {
-        baseVolOrder = existingVols.length;
+      var keptVolCount = 0;
+      for (final vol in existingVols) {
+        final chs = await db.getChaptersByVolume(vol.id);
+        final hasMeaningfulContent = chs.any(
+          (c) =>
+              c.isOriginal ||
+              c.content.trim().isNotEmpty ||
+              (c.detailedOutline ?? '').trim().isNotEmpty,
+        );
+        if (!hasMeaningfulContent && (vol.outline ?? '').trim().isEmpty) {
+          await db.deleteVolume(vol.id);
+        } else {
+          keptVolCount += 1;
+        }
       }
+      final baseVolOrder = keptVolCount;
 
       for (var v = 0; v < blueprint.volumes.length; v++) {
         final vItem = blueprint.volumes[v];

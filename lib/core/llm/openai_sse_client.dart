@@ -32,7 +32,7 @@ class OpenAiSseClient implements LLMClient {
       BaseOptions(
         connectTimeout: const Duration(seconds: 20),
         sendTimeout: const Duration(seconds: 30),
-        receiveTimeout: const Duration(seconds: 90),
+        receiveTimeout: const Duration(seconds: 150),
         validateStatus: (_) => true,
       ),
     );
@@ -77,65 +77,137 @@ class OpenAiSseClient implements LLMClient {
       if (config.includeUsage) 'stream_options': {'include_usage': true},
     };
 
-    Response<ResponseBody> response;
-    try {
-      response = await _dio.postUri<ResponseBody>(
-        uri,
-        data: body,
-        cancelToken: cancelToken,
-        options: Options(
-          responseType: ResponseType.stream,
-          headers: {
-            'Content-Type': 'application/json',
-            'Accept': 'text/event-stream',
-            'Authorization': 'Bearer $apiKey',
-          },
-        ),
-      );
-    } on DioException catch (e) {
-      if (CancelToken.isCancel(e)) return;
-      throw LLMException(
-        LLMException.redactCredentials(e.message ?? '网络请求失败'),
-      );
-    }
+    const maxPreTokenAttempts = 3;
+    for (var attempt = 0; attempt < maxPreTokenAttempts; attempt++) {
+      if (cancelToken?.isCancelled ?? false) return;
+      var yieldedAny = false;
 
-    final status = response.statusCode ?? 0;
-    final streamBody = response.data;
-    if (streamBody == null) {
-      throw LLMException.httpStatus(status, '响应体为空');
-    }
-
-    if (status != 200) {
-      final buffer = StringBuffer();
-      await for (final chunk in streamBody.stream) {
-        buffer.write(utf8.decode(chunk, allowMalformed: true));
-        if (buffer.length >= 4096) {
-          buffer.write('……');
-          break;
+      Response<ResponseBody> response;
+      try {
+        response = await _dio.postUri<ResponseBody>(
+          uri,
+          data: body,
+          cancelToken: cancelToken,
+          options: Options(
+            responseType: ResponseType.stream,
+            headers: {
+              'Content-Type': 'application/json',
+              'Accept': 'text/event-stream',
+              'Authorization': 'Bearer $apiKey',
+            },
+          ),
+        );
+      } on DioException catch (e) {
+        if (CancelToken.isCancel(e)) return;
+        final isLast = attempt == maxPreTokenAttempts - 1;
+        if (!isLast && _isRetryableDio(e)) {
+          await _retryBackoff(attempt, cancelToken);
+          continue;
         }
+        final detail = e.error?.toString() ?? e.message ?? e.type.name;
+        throw LLMException(
+          LLMException.redactCredentials('网络请求失败（${e.type.name}）：$detail'),
+        );
       }
-      throw LLMException.httpStatus(status, buffer.toString());
+
+      final status = response.statusCode ?? 0;
+      final streamBody = response.data;
+      if (streamBody == null) {
+        if (attempt < maxPreTokenAttempts - 1) {
+          await _retryBackoff(attempt, cancelToken);
+          continue;
+        }
+        throw LLMException.httpStatus(status, '响应体为空');
+      }
+
+      if (status != 200) {
+        final buffer = StringBuffer();
+        await for (final chunk in streamBody.stream) {
+          buffer.write(utf8.decode(chunk, allowMalformed: true));
+          if (buffer.length >= 4096) {
+            buffer.write('……');
+            break;
+          }
+        }
+        if (attempt < maxPreTokenAttempts - 1 && _isRetryableStatus(status)) {
+          await _retryBackoff(attempt, cancelToken);
+          continue;
+        }
+        throw LLMException.httpStatus(status, buffer.toString());
+      }
+
+      final lineStream = streamBody.stream
+          .cast<List<int>>()
+          .transform(const Utf8Decoder(allowMalformed: true))
+          .transform(const LineSplitter());
+
+      try {
+        await for (final line in lineStream) {
+          if (cancelToken?.isCancelled ?? false) return;
+          if (!line.startsWith('data:')) continue;
+          final payload = line.substring(5).trim();
+          if (payload.isEmpty) continue;
+          if (payload == '[DONE]') break;
+
+          final errorText = extractInStreamError(payload);
+          if (errorText != null) {
+            if (!yieldedAny && attempt < maxPreTokenAttempts - 1) {
+              throw _PreTokenRetrySignal(errorText);
+            }
+            throw LLMException.httpStatus(500, errorText);
+          }
+          for (final event in extractEvents(payload)) {
+            if (event is ContentDelta || event is ReasoningDelta) {
+              yieldedAny = true;
+            }
+            yield event;
+          }
+        }
+        return;
+      } on _PreTokenRetrySignal {
+        await _retryBackoff(attempt, cancelToken);
+        continue;
+      } on DioException catch (e) {
+        if (CancelToken.isCancel(e)) return;
+        if (!yieldedAny && attempt < maxPreTokenAttempts - 1) {
+          await _retryBackoff(attempt, cancelToken);
+          continue;
+        }
+        final detail = e.error?.toString() ?? e.message ?? e.type.name;
+        throw LLMException(
+          LLMException.redactCredentials('流式读取中断（${e.type.name}）：$detail'),
+        );
+      } catch (e) {
+        if (e is LLMException) rethrow;
+        if (!yieldedAny && attempt < maxPreTokenAttempts - 1) {
+          await _retryBackoff(attempt, cancelToken);
+          continue;
+        }
+        throw LLMException(LLMException.redactCredentials('流式读取异常：$e'));
+      }
     }
+  }
 
-    final lineStream = streamBody.stream
-        .cast<List<int>>()
-        .transform(const Utf8Decoder(allowMalformed: true))
-        .transform(const LineSplitter());
+  static bool _isRetryableStatus(int code) =>
+      code == 429 || code == 500 || code == 502 || code == 503 || code == 504;
 
-    await for (final line in lineStream) {
-      if (cancelToken?.isCancelled ?? false) break;
-      if (!line.startsWith('data:')) continue;
-      final payload = line.substring(5).trim();
-      if (payload.isEmpty) continue;
-      if (payload == '[DONE]') break;
+  static bool _isRetryableDio(DioException e) => switch (e.type) {
+    DioExceptionType.connectionTimeout ||
+    DioExceptionType.sendTimeout ||
+    DioExceptionType.receiveTimeout ||
+    DioExceptionType.connectionError ||
+    DioExceptionType.unknown => true,
+    _ => false,
+  };
 
-      final errorText = extractInStreamError(payload);
-      if (errorText != null) {
-        throw LLMException.httpStatus(500, errorText);
-      }
-      for (final event in extractEvents(payload)) {
-        yield event;
-      }
+  static Future<void> _retryBackoff(
+    int attempt,
+    CancelToken? cancelToken,
+  ) async {
+    final ms = attempt == 0 ? 1200 : 2500;
+    for (var elapsed = 0; elapsed < ms; elapsed += 200) {
+      if (cancelToken?.isCancelled ?? false) return;
+      await Future<void>.delayed(const Duration(milliseconds: 200));
     }
   }
 
@@ -266,4 +338,9 @@ class OpenAiSseClient implements LLMClient {
     }
     return err.toString();
   }
+}
+
+class _PreTokenRetrySignal implements Exception {
+  const _PreTokenRetrySignal(this.reason);
+  final String reason;
 }
