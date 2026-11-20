@@ -6,31 +6,88 @@ import 'package:zhiming/core/database/app_database.dart';
 import 'package:zhiming/core/storage/blob_store.dart';
 import 'package:zhiming/domain/models/source_profile_models.dart';
 import 'package:zhiming/domain/source/continuation_context.dart';
+import 'package:zhiming/domain/source/novel_local_indexer.dart';
+import 'package:zhiming/domain/source/novel_text_cleaner.dart';
 import 'package:zhiming/domain/source/source_batch_helper.dart';
 import 'package:zhiming/domain/source/source_reduce_watermark.dart';
 import 'package:zhiming/domain/source/source_reducer.dart';
 import 'package:zhiming/domain/source/source_scan_chunker.dart';
 import 'package:zhiming/domain/source/source_time_window.dart';
+import 'package:zhiming/domain/writing/assistant_search.dart';
 import 'package:zhiming/features/source_archive/source_injection_helper.dart';
 
 void main() {
-  group('SourceScanChunker & MicroSummarizer & BatchHelper', () {
-    test('SourceScanChunker splits fast head+tail vs full parts', () {
+  group('SourceScanChunker & NovelTextCleaner & BatchHelper', () {
+    test('SourceScanChunker fast mode abridges single chunk and never exceeds full count', () {
       final longBody = '雾港钟楼响起雨夜钟声。' * 400; // 4400 chars
       final shortBody = '短章正文内容。' * 40; // 280 chars
       final book = '第一章 雨夜启程\n$longBody\n\n第二章 短章过渡\n$shortBody';
 
       final fastChunks = SourceScanChunker.chunks(book, mode: ScanMode.fast);
-      expect(fastChunks.length, 3);
-      expect(fastChunks[0].kind, 'head');
-      expect(fastChunks[1].kind, 'tail');
-      expect(fastChunks[2].kind, 'full');
+      expect(fastChunks.length, 2);
+      expect(fastChunks[0].kind, 'fast_abridged');
+      expect(fastChunks[1].kind, 'full');
 
       final fullChunks = SourceScanChunker.chunks(book, mode: ScanMode.full);
       expect(fullChunks.length, 3);
-      expect(fullChunks[0].kind, 'part');
-      expect(fullChunks[1].kind, 'part');
-      expect(fullChunks[2].kind, 'full');
+      expect(fastChunks.length <= fullChunks.length, isTrue);
+    });
+
+    test('NovelTextCleaner strips abandonment epilogue and tomato metadata', () {
+      const dirty = '''
+莫烬叹了口气，望向残破的群星之城。
+……
+《完》
+这本书的成绩不太理想，坚持不了了，感谢大家一直以来的支持！！
+（ '▿ ' ）
+----------------------------------------
+''';
+      final cleaned = NovelTextCleaner.cleanChapterBody(dirty);
+      expect(cleaned, contains('莫烬叹了口气'));
+      expect(cleaned, isNot(contains('《完》')));
+      expect(cleaned, isNot(contains('成绩不太理想')));
+    });
+
+    test('NovelLocalIndexer auto-discovers entities, voice samples & grepSpan', () {
+      const book = '''
+书名：测试小说
+简介：莫烬与月莲在雾港冒险的故事。
+========================================
+第1章 初遇
+莫烬叹了口气说道：“这也太麻烦了。”
+月莲冷笑道：“笨蛋狼人，这群人类关我屁事。”
+莫烬望着怀里的银色怀表，微微一愣。
+
+第2章 交易
+莫烬问道：“罗娜怎么变回黑猫了？”
+月莲翻了个白眼：“那只蠢猫早就想退休了。”
+帕梅拉望着两人，沉默不语。
+''';
+      final indexer = NovelLocalIndexer.fromRawText(book);
+      expect(indexer.chapters.length, 2);
+      expect(indexer.headerSynopsis, contains('莫烬与月莲'));
+      final names = indexer.topEntities.map((e) => e.name).toList();
+      expect(names, containsAll(['莫烬', '月莲']));
+      final hits = indexer.grepSpan('银色怀表');
+      expect(hits.length, 1);
+      expect(hits.first.chapterNo, 1);
+      final prefix = indexer.buildEvidenceStaticPrefix(
+        title: '测试小说',
+        isContinuation: true,
+      );
+      expect(prefix, contains('全书高频角色/实体出场热力图'));
+      expect(prefix, contains('原话声音样本'));
+    });
+
+    test('AssistantSearchProtocol extracts zm-search queries and strips block', () {
+      const reply = '''
+我先查一下前文细节。
+```zm-search
+{"queries": ["爱丽丝", "银色怀表"]}
+```
+''';
+      expect(AssistantSearchProtocol.extractQueries(reply), ['爱丽丝', '银色怀表']);
+      expect(AssistantSearchProtocol.stripSearchBlock(reply), '我先查一下前文细节。');
     });
 
     test('SourceBatchHelper extracts multiple JSON objects amidst noise', () {

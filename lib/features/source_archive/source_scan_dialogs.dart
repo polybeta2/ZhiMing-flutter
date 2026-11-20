@@ -219,18 +219,21 @@ class _SourceScanProgressDialogState
                 ),
               ),
             Text(
-              switch (phase) {
-                ScanPhase.idle => '准备中…',
-                ScanPhase.mapping =>
-                  '正在逐批分析并滚动归并（${widget.mode.label} · 每批 ${widget.batchSize} 块）',
-                ScanPhase.reducing =>
-                  widget.isContinuation
-                      ? '正在深度归并人物现状、未回收伏笔与剧情弧…'
-                      : '正在终归并全书人物、时间线与世界观…',
-                ScanPhase.paused => '已暂停（进度已自动保存到断点，可随时继续或更换模型）',
-                ScanPhase.done => '分析完成！档案已入库',
-                ScanPhase.failed => '分析中断（已完成块与阶段摘要已安全缓存）',
-              },
+              ctrl?.statusDetail ??
+                  switch (phase) {
+                    ScanPhase.idle => '准备中…',
+                    ScanPhase.mapping =>
+                      widget.mode == ScanMode.evidence
+                          ? '正在进行极速证据建档（本地索引 + 检索查证 + 前缀缓存）…'
+                          : '正在逐批分析并滚动归并（${widget.mode.label} · 每批 ${widget.batchSize} 块）',
+                    ScanPhase.reducing =>
+                      widget.isContinuation
+                          ? '正在深度归并人物现状、未回收伏笔与剧情弧…'
+                          : '正在终归并全书人物、时间线与世界观…',
+                    ScanPhase.paused => '已暂停（进度已自动保存到断点，可随时继续或更换模型）',
+                    ScanPhase.done => '分析完成！档案已入库',
+                    ScanPhase.failed => '分析中断（已完成块与阶段摘要已安全缓存）',
+                  },
               style: Theme.of(context).textTheme.bodyMedium,
             ),
             const SizedBox(height: 12),
@@ -245,12 +248,15 @@ class _SourceScanProgressDialogState
             Row(
               children: [
                 Text(
-                  '分块 $done / $total',
+                  widget.mode == ScanMode.evidence
+                      ? '阶段 $done / $total'
+                      : '分块 $done / $total',
                   style: Theme.of(context).textTheme.bodySmall,
                 ),
                 const Spacer(),
                 Text(
-                  'Token ${((ctrl?.tokensIn ?? 0) / 1000).toStringAsFixed(1)}k 入 / '
+                  'Token ${((ctrl?.tokensIn ?? 0) / 1000).toStringAsFixed(1)}k 入'
+                  '${(ctrl?.cachedTokens ?? 0) > 0 ? "（缓存 ${(ctrl!.cachedTokens / 1000).toStringAsFixed(1)}k）" : ""} / '
                   '${((ctrl?.tokensOut ?? 0) / 1000).toStringAsFixed(1)}k 出',
                   style: Theme.of(context).textTheme.bodySmall,
                 ),
@@ -651,7 +657,7 @@ class _ContinuationImportDialogState
   List<SampleChapter> _chapters = const [];
   int _continueFrom = 1;
   bool _useBatchCopy = false;
-  ScanMode _mode = ScanMode.fast;
+  ScanMode _mode = ScanMode.evidence;
   int _batchSize = 3;
   bool _loadingFile = false;
 

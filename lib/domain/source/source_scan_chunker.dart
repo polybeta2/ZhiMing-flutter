@@ -1,5 +1,6 @@
 import '../models/source_profile_models.dart';
 import '../style/style_chapter_sampler.dart';
+import 'novel_text_cleaner.dart';
 
 class SourceScanChunk {
   const SourceScanChunk({
@@ -9,16 +10,17 @@ class SourceScanChunk {
   });
 
   final int chapterIndex;
-  final String kind; // 'head' | 'tail' | 'full' | 'part'
+  final String kind; // 'fast_abridged' | 'full' | 'part'
   final String text;
 }
 
-/// 原作分析切块器：复用 StyleChapterSampler 切章，区分快扫/精扫两档。
+/// 原作分析切块器：复用 StyleChapterSampler 切章，先经 NovelTextCleaner 净化正文。
+/// 修复快扫模式块数倒挂 Bug：超过 fastMinSplit 的章节首尾拼接为单块，保证快扫块数恒 <= 精扫块数。
 class SourceScanChunker {
   const SourceScanChunker._();
 
   static const int fastHeadChars = 1500;
-  static const int fastTailChars = 500;
+  static const int fastTailChars = 600;
   static const int fastMinSplit = 2500;
   static const int fullMaxChunk = 4000;
   static const int fallbackWindow = 4000;
@@ -28,28 +30,25 @@ class SourceScanChunker {
     if (chapters.isEmpty) return _fallbackChunks(text);
     final result = <SourceScanChunk>[];
     for (var i = 0; i < chapters.length; i++) {
-      final body = chapters[i].body;
+      final body = NovelTextCleaner.cleanChapterBody(chapters[i].body);
+      if (body.isEmpty) continue;
       switch (mode) {
+        case ScanMode.evidence:
         case ScanMode.fast:
           if (body.length < fastMinSplit) {
             result.add(
               SourceScanChunk(chapterIndex: i, kind: 'full', text: body),
             );
           } else {
-            result.add(
-              SourceScanChunk(
-                chapterIndex: i,
-                kind: 'head',
-                text: body.substring(0, fastHeadChars.clamp(0, body.length)),
-              ),
+            final head = body.substring(0, fastHeadChars.clamp(0, body.length));
+            final tail = body.substring(
+              (body.length - fastTailChars).clamp(0, body.length),
             );
             result.add(
               SourceScanChunk(
                 chapterIndex: i,
-                kind: 'tail',
-                text: body.substring(
-                  (body.length - fastTailChars).clamp(0, body.length),
-                ),
+                kind: 'fast_abridged',
+                text: '$head\n…（本章中段已略）…\n$tail',
               ),
             );
           }
@@ -78,18 +77,20 @@ class SourceScanChunker {
   }
 
   static List<SourceScanChunk> _fallbackChunks(String text) {
-    final trimmed = text.trim();
-    if (trimmed.isEmpty) return const [];
+    final cleaned = NovelTextCleaner.cleanChapterBody(
+      NovelTextCleaner.stripLeadingMetadata(text),
+    );
+    if (cleaned.isEmpty) return const [];
     final out = <SourceScanChunk>[];
     var offset = 0;
     var index = 0;
-    while (offset < trimmed.length) {
-      final end = (offset + fallbackWindow).clamp(0, trimmed.length);
+    while (offset < cleaned.length) {
+      final end = (offset + fallbackWindow).clamp(0, cleaned.length);
       out.add(
         SourceScanChunk(
           chapterIndex: index,
           kind: 'part',
-          text: trimmed.substring(offset, end),
+          text: cleaned.substring(offset, end),
         ),
       );
       offset = end;

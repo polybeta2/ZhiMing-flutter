@@ -425,13 +425,19 @@ class _ChapterEditorWidgetState extends ConsumerState<ChapterEditorWidget> {
     var msgs = req.isNewChapter
         ? PromptTemplates.writing(
             library: lib,
-            renderedContext: ctx.rendered,
+            staticContext: ctx.staticPrefix,
+            renderedContext: ctx.dynamicSuffix.isNotEmpty
+                ? ctx.dynamicSuffix
+                : ctx.rendered,
             wordTarget: req.wordTarget,
             extra: req.instruction,
           )
         : PromptTemplates.continueWriting(
             library: lib,
-            renderedContext: ctx.rendered,
+            staticContext: ctx.staticPrefix,
+            renderedContext: ctx.dynamicSuffix.isNotEmpty
+                ? ctx.dynamicSuffix
+                : ctx.rendered,
             wordTarget: req.wordTarget,
             extra: req.instruction,
           );

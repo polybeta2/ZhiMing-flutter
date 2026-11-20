@@ -17,6 +17,7 @@ import '../../core/prompts/prompt_library.dart';
 import '../../core/prompts/prompt_limits.dart';
 import '../../core/prompts/prompt_templates.dart';
 import '../../core/security/api_key_vault.dart';
+import '../../core/storage/blob_store.dart';
 import '../../core/theme/design_tokens.dart';
 import '../../core/utils/prompt_guard.dart';
 import '../../core/widgets/streaming_status_chip.dart';
@@ -24,7 +25,9 @@ import '../../core/widgets/zm_widgets.dart';
 import '../../domain/creation/creation_session_engine.dart';
 import '../../domain/models/blueprint_models.dart';
 import '../../domain/models/novel_domain.dart';
+import '../../domain/source/novel_local_indexer.dart';
 import '../../domain/writing/assistant_patch.dart';
+import '../../domain/writing/assistant_search.dart';
 import '../../domain/writing/context_builder.dart';
 import '../app_settings/model_selector_sheet.dart';
 import 'blueprint_review_card.dart';
@@ -485,6 +488,7 @@ class _AssistantChatViewState extends ConsumerState<AssistantChatView> {
     if (refCtx.rendered.isNotEmpty) {
       system += '\n\n【当前作品档案】\n${refCtx.rendered}';
     }
+    system += '\n\n${AssistantSearchProtocol.systemInstruction}';
 
     final dbMsgs = await ref.read(appDatabaseProvider).getChatMessages(thread.id);
     final recent = dbMsgs.length > 12
@@ -523,33 +527,65 @@ class _AssistantChatViewState extends ConsumerState<AssistantChatView> {
     _progress.begin();
     await WakelockPlus.enable();
 
-    final buf = StringBuffer();
     try {
       final client = await createClientForProvider(
         provider,
         ref.read(apiKeyVaultProvider),
       );
-      await for (final ev in client.streamChat(
-        msgs,
-        config: GenerationConfig(
-          temperature: provider.temperature,
-          maxTokens: provider.maxTokens,
-        ),
-        cancelToken: _cancel,
-      )) {
-        _progress.handle(ev);
-        if (ev is ContentDelta) {
-          buf.write(ev.text);
-          if (mounted) setState(() => _streamingBuffer = buf.toString());
+      var activeMsgs = List<LLMMessage>.from(msgs);
+      var finalText = '';
+
+      // 最多支持 2 轮本地按需查书（zm-search），每轮 <30ms，字节级复用静态前缀命中 KV Cache
+      for (var searchRound = 0; searchRound <= 2; searchRound++) {
+        final buf = StringBuffer();
+        await for (final ev in client.streamChat(
+          activeMsgs,
+          config: GenerationConfig(
+            temperature: provider.temperature,
+            maxTokens: provider.maxTokens,
+          ),
+          cancelToken: _cancel,
+        )) {
+          _progress.handle(ev);
+          if (ev is ContentDelta) {
+            buf.write(ev.text);
+            if (mounted) setState(() => _streamingBuffer = buf.toString());
+          }
         }
+        if (_cancel?.isCancelled ?? false) return;
+
+        final roundText = buf.toString().trim();
+        final queries = AssistantSearchProtocol.extractQueries(roundText);
+        if (queries.isNotEmpty && searchRound < 2) {
+          if (mounted) {
+            setState(
+              () => _streamingBuffer = '正在本地查书核对：${queries.join("、")}…',
+            );
+          }
+          final evidence = await _runLocalBookSearch(bundle, queries);
+          activeMsgs = [
+            ...activeMsgs,
+            LLMMessage(role: LLMRole.assistant, content: roundText),
+            LLMMessage(
+              role: LLMRole.user,
+              content:
+                  '【本地查书返回原文证据】\n$evidence\n\n请基于以上真实原文证据直接回答用户问题（不要再输出 zm-search，除非仍有关键缺漏）。',
+            ),
+          ];
+          continue;
+        }
+        finalText = AssistantSearchProtocol.stripSearchBlock(roundText);
+        break;
       }
-      final fullText = buf.toString().trim();
-      if (fullText.isNotEmpty) {
+
+      if (finalText.isNotEmpty) {
         if (_accessMode == AssistantAccessMode.readWrite) {
-          final extracted = AssistantPatch.extract(fullText);
+          final extracted = AssistantPatch.extract(finalText);
           await _appendMessage(
             'assistant',
-            extracted.cleanedText.isEmpty ? '已生成设定变更提案，请审阅下方卡片：' : extracted.cleanedText,
+            extracted.cleanedText.isEmpty
+                ? '已生成设定变更提案，请审阅下方卡片：'
+                : extracted.cleanedText,
           );
           if (extracted.patch != null) {
             final latestBundle = await repo.loadBundle(widget.novelId);
@@ -561,7 +597,7 @@ class _AssistantChatViewState extends ConsumerState<AssistantChatView> {
             }
           }
         } else {
-          await _appendMessage('assistant', fullText);
+          await _appendMessage('assistant', finalText);
         }
       }
     } catch (e) {
@@ -576,6 +612,55 @@ class _AssistantChatViewState extends ConsumerState<AssistantChatView> {
         });
       }
     }
+  }
+
+  Future<String> _runLocalBookSearch(
+    NovelBundle bundle,
+    List<String> queries,
+  ) async {
+    final chapters = <IndexedChapter>[];
+    var idx = 1;
+    for (final ch in bundle.allChaptersInOrder) {
+      if (ch.chapter.content.trim().isEmpty) continue;
+      chapters.add(
+        IndexedChapter(
+          chapterNo: idx++,
+          title: '${ch.volumeName} · ${ch.chapter.title}',
+          body: ch.chapter.content,
+        ),
+      );
+    }
+
+    NovelLocalIndexer? sourceIndexer;
+    final srcId = bundle.novel.sourceProfileId;
+    if (srcId != null && srcId.isNotEmpty) {
+      final rawSource = await ref
+          .read(blobStoreProvider)
+          .loadText(BlobKinds.continuation, srcId);
+      if (rawSource != null && rawSource.isNotEmpty) {
+        sourceIndexer = NovelLocalIndexer.fromRawText(rawSource);
+      }
+    }
+    final novelIndexer = NovelLocalIndexer.fromChapters(chapters);
+
+    final out = StringBuffer();
+    for (final q in queries) {
+      out.writeln('■ 关键词「$q」：');
+      final novelHits = novelIndexer.grepSpan(q, earliestHits: 1, latestHits: 2);
+      final srcHits =
+          sourceIndexer?.grepSpan(q, earliestHits: 1, latestHits: 2) ?? const [];
+      if (novelHits.isEmpty && srcHits.isEmpty) {
+        out.writeln('  （未在当前作品及关联原作中检索到精确匹配）');
+      } else {
+        for (final h in novelHits) {
+          out.writeln('  [本作] ${h.format()}');
+        }
+        for (final h in srcHits) {
+          out.writeln('  [原作] ${h.format()}');
+        }
+      }
+    }
+    return out.toString().trim();
   }
 
   Future<void> _applyPatch() async {

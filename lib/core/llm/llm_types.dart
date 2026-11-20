@@ -46,9 +46,21 @@ final class ContentDelta extends StreamEvent {
 }
 
 final class UsageReport extends StreamEvent {
-  const UsageReport({required this.promptTokens, required this.completionTokens});
+  const UsageReport({
+    required this.promptTokens,
+    required this.completionTokens,
+    this.cachedTokens = 0,
+    this.reasoningTokens = 0,
+  });
+
   final int promptTokens;
   final int completionTokens;
+  final int cachedTokens;
+  final int reasoningTokens;
+
+  /// KV 前缀缓存命中率（0.0 ~ 1.0）
+  double get cacheHitRate =>
+      promptTokens > 0 ? (cachedTokens / promptTokens).clamp(0.0, 1.0) : 0.0;
 }
 
 class LLMException implements Exception {

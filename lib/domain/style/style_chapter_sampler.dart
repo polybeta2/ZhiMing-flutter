@@ -1,5 +1,7 @@
 import 'dart:math' as math;
 
+import '../source/novel_text_cleaner.dart';
+
 class SampleChapter {
   const SampleChapter({
     required this.marker,
@@ -68,7 +70,13 @@ abstract final class StyleChapterSampler {
       if (survivors.contains(i)) {
         var body = ch.body;
         if (result.isEmpty && preamble.isNotEmpty) {
-          body = '$preamble\n$body'.trim();
+          final cleanedPreamble = NovelTextCleaner.stripLeadingMetadata(
+            preamble,
+          );
+          if (cleanedPreamble.isNotEmpty &&
+              !NovelTextCleaner.looksLikeHeaderMetadata(preamble)) {
+            body = '$cleanedPreamble\n$body'.trim();
+          }
         }
         if (pendingDrop.isNotEmpty) {
           body = '${pendingDrop.join('\n')}\n$body'.trim();
@@ -79,7 +87,7 @@ abstract final class StyleChapterSampler {
             marker: ch.marker,
             number: ch.number,
             symbol: ch.symbol,
-            body: body,
+            body: NovelTextCleaner.cleanChapterBody(body),
           ),
         );
       } else {
@@ -159,10 +167,20 @@ abstract final class StyleChapterSampler {
     if (total <= initialCount) return [for (var i = 0; i < total; i++) i];
     final rng = math.Random();
     final pick = pickRandom ?? rng.nextInt;
-    final picked = <int>{0, 1, total - 2, total - 1};
-    var pool = [for (var i = 2; i < total - 2; i++) i];
+    final picked = <int>{
+      0,
+      if (total >= 12) total - 3 else 1,
+      total - 2,
+      total - 1,
+    };
+    var pool = [
+      for (var i = 1; i < total - 3; i++)
+        if (!picked.contains(i)) i,
+    ];
     if (total >= 12) {
-      final mid = pool.where((i) => i >= total ~/ 4 && i < (total * 3) ~/ 4).toList();
+      final mid = pool
+          .where((i) => i >= total ~/ 4 && i < (total * 3) ~/ 4)
+          .toList();
       if (mid.length >= 2) pool = mid;
     }
     for (var k = 0; k < 2 && pool.isNotEmpty; k++) {

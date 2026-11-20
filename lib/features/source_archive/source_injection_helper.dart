@@ -9,6 +9,7 @@ import '../../core/storage/blob_store.dart';
 import '../../domain/models/source_profile_models.dart';
 import '../../domain/models/style_models.dart';
 import '../../domain/source/continuation_context.dart';
+import '../../domain/source/novel_text_cleaner.dart';
 import '../../domain/source/source_time_window.dart';
 import '../../domain/style/style_card_renderer.dart';
 import '../../domain/style/style_chapter_sampler.dart';
@@ -220,13 +221,14 @@ class SourceAndStyleBridge {
           final chTitle = ch.marker.trim().isNotEmpty
               ? ch.marker.trim()
               : '第$order章';
+          final cleanBody = NovelTextCleaner.cleanChapterBody(ch.body);
           await db.upsertChapter(
             ChaptersCompanion.insert(
               id: uuid.v4(),
               volumeId: origVolId,
               title: chTitle,
-              content: Value(ch.body),
-              wordCount: Value(ch.body.length),
+              content: Value(cleanBody),
+              wordCount: Value(cleanBody.length),
               isOriginal: const Value(true),
               sortOrder: order++,
               updatedAt: now,

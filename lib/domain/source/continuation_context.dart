@@ -1,7 +1,8 @@
 import '../models/source_profile_models.dart';
+import 'novel_text_cleaner.dart';
 
-/// 续写上下文装配器：把「截至 X 章」的深度档案（人物快照 + 未回收伏笔 + 活跃剧情弧 + 设定）
-/// 与「近期原文末尾」按预算装成统一上下文块。
+/// 续写上下文装配器：把「截至 X 章」的深度档案（人物快照 + 口癖声音样本 + 未回收伏笔 + 活跃剧情弧 + 设定）
+/// 与「已净化的近期原文末尾」按预算装成统一上下文块。
 class ContinuationContext {
   const ContinuationContext._();
 
@@ -21,8 +22,10 @@ class ContinuationContext {
       used += header.length + 2;
     }
 
-    // 预留给近期原文的预算（如果存在近期原文，保留 ~35%-45% 给文风与场景无缝衔接）
-    final cleanRecent = recentText?.trim() ?? '';
+    // 预留给近期原文的预算（如果存在近期原文，保留 ~35%-45% 给文风与场景无缝衔接，先剥离《完》作者感言）
+    final cleanRecent = recentText == null
+        ? ''
+        : NovelTextCleaner.cleanChapterBody(recentText);
     final recentReserve = cleanRecent.isEmpty
         ? 0
         : (maxChars * 0.4).round().clamp(600, 3600);
@@ -51,7 +54,10 @@ class ContinuationContext {
         final rel = c.relationships.isEmpty
             ? ''
             : '；关系:${c.relationships.take(3).map((r) => "${r.target}(${r.relation})").join("、")}';
-        return '${c.name}：$state$rel';
+        final voice = c.voiceSamples.isEmpty
+            ? ''
+            : '；原话口癖:${c.voiceSamples.take(2).join("/")}';
+        return '${c.name}：$state$rel$voice';
       }).toList(),
     );
 

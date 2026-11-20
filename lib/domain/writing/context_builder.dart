@@ -3,10 +3,22 @@ import '../../core/prompts/prompt_limits.dart';
 import '../models/novel_domain.dart';
 
 class BuiltContext {
-  const BuiltContext({required this.rendered, required this.truncatedSections});
+  const BuiltContext({
+    required this.rendered,
+    required this.truncatedSections,
+    this.staticPrefix = '',
+    this.dynamicSuffix = '',
+  });
 
+  /// 完整拼接上下文（兼容旧调用方）
   final String rendered;
   final List<String> truncatedSections;
+
+  /// KV 前缀缓存友好：全书/单卷级相对静态上下文（适合置于 system 消息，80%+ 缓存命中）
+  final String staticPrefix;
+
+  /// 单章/单次动态上下文（细纲、邻章衔接、当前正文末尾，适合置于 user 消息）
+  final String dynamicSuffix;
 }
 
 sealed class OutlineTarget {
@@ -38,39 +50,41 @@ abstract final class ContextBuilder {
     String? styleCard,
     String? sourceWindow,
   }) {
-    final required = <String>[];
-    final high = <(String, String)>[];
-    final optional = <(String, String)>[];
+    final staticRequired = <String>[];
+    final dynamicRequired = <String>[];
+    final staticOptional = <(String, String)>[];
+    final dynamicHigh = <(String, String)>[];
+    final dynamicOptional = <(String, String)>[];
     final truncated = <String>[];
 
     final styleGuide = bundle.novel.styleGuide;
     if (styleGuide != null && styleGuide.trim().isNotEmpty) {
-      required.add(
+      staticRequired.add(
         '【风格约束】\n${_cappedRequired(styleGuide, '风格约束', truncated)}',
       );
     }
     if (styleCard != null && styleCard.isNotEmpty) {
-      required.add(styleCard);
+      staticRequired.add(styleCard);
     }
     if (sourceWindow != null && sourceWindow.isNotEmpty) {
-      required.add('【原作该阶段人物与事件】\n$sourceWindow');
+      staticRequired.add('【原作该阶段人物与事件】\n$sourceWindow');
     }
 
-    _appendPrevProseTail(chapter, bundle, required);
+    _appendPrevProseTail(chapter, bundle, dynamicRequired);
 
     final detailedOutline = chapter.chapter.detailedOutline;
     if (detailedOutline != null && detailedOutline.trim().isNotEmpty) {
-      required.add(
+      dynamicRequired.add(
         '【本章细纲】\n${_cappedRequired(detailedOutline, '本章细纲', truncated)}',
       );
     }
     final cards = chapter.sceneCards;
     if (cards.isNotEmpty) {
-      required.add(
+      dynamicRequired.add(
         '【场景卡】\n${_cappedRequired(renderSceneCards(cards), '场景卡', truncated)}',
       );
     }
-    _appendNextOutlineHead(chapter, bundle, required);
+    _appendNextOutlineHead(chapter, bundle, dynamicRequired);
 
     final positions = bundle.globalIndexMap();
     final currentGlobal = positions[chapter.chapter.id] ?? 0;
@@ -78,12 +92,12 @@ abstract final class ContextBuilder {
     final prevSums = _summariesBefore(currentGlobal, bundle, positions, limit: 3);
     if (prevSums.isNotEmpty) {
       final text = prevSums.map((e) => '第${e.$1}章：${e.$2}').join('\n');
-      high.add(('前文摘要', '【前文摘要（最近 ${prevSums.length} 章）】\n$text'));
+      dynamicHigh.add(('前文摘要', '【前文摘要（最近 ${prevSums.length} 章）】\n$text'));
     }
 
     final facts = _keyFactsBefore(currentGlobal, bundle, positions, limit: 3);
     if (facts.isNotEmpty) {
-      high.add(('关键事实', '【关键事实】\n${facts.map((f) => '- $f').join('\n')}'));
+      dynamicHigh.add(('关键事实', '【关键事实】\n${facts.map((f) => '- $f').join('\n')}'));
     }
 
     final sceneChars = bundle.characters
@@ -92,7 +106,7 @@ abstract final class ContextBuilder {
         .map(_renderCharacter)
         .toList();
     if (sceneChars.isNotEmpty) {
-      optional.add(('角色状态', '【角色当前状态】\n${sceneChars.join('\n\n')}'));
+      staticOptional.add(('角色状态', '【角色当前状态】\n${sceneChars.join('\n\n')}'));
     }
 
     final world = bundle.worldEntries
@@ -100,7 +114,7 @@ abstract final class ContextBuilder {
         .map((w) => '- [${w.category}] ${w.name}：${w.content}')
         .toList();
     if (world.isNotEmpty) {
-      optional.add(('世界观', '【世界观条目】\n${world.join('\n')}'));
+      staticOptional.add(('世界观', '【世界观条目】\n${world.join('\n')}'));
     }
 
     final volIdx = _volumeIndexOf(bundle, chapter.volumeId);
@@ -110,14 +124,31 @@ abstract final class ContextBuilder {
       currentChapterOrder: chapter.chapter.sortOrder,
     );
     if (reminders != null) {
-      optional.add(('未回收伏笔', reminders));
+      dynamicOptional.add(('未回收伏笔', reminders));
     }
 
-    var used = required.join('\n\n').length;
-    final accepted = <String>[];
-    for (final (name, text) in [...high, ...optional]) {
+    var used = [...staticRequired, ...dynamicRequired].join('\n\n').length;
+    final acceptedStatic = <String>[];
+    final acceptedDynamic = <String>[];
+    for (final (name, text) in dynamicHigh) {
       if (used + text.length <= budgetChars) {
-        accepted.add(text);
+        acceptedDynamic.add(text);
+        used += text.length;
+      } else {
+        truncated.add(name);
+      }
+    }
+    for (final (name, text) in staticOptional) {
+      if (used + text.length <= budgetChars) {
+        acceptedStatic.add(text);
+        used += text.length;
+      } else {
+        truncated.add(name);
+      }
+    }
+    for (final (name, text) in dynamicOptional) {
+      if (used + text.length <= budgetChars) {
+        acceptedDynamic.add(text);
         used += text.length;
       } else {
         truncated.add(name);
@@ -130,9 +161,21 @@ abstract final class ContextBuilder {
     }
     final tailBlock =
         '【正文末尾】\n${tail.isEmpty ? '（本章尚无正文，请从开头写起）' : tail}';
+
+    final staticParts = [...staticRequired, ...acceptedStatic];
+    final dynamicParts = [...dynamicRequired, ...acceptedDynamic, tailBlock];
+    final staticPrefix = staticParts.join('\n\n');
+    final dynamicSuffix = dynamicParts.join('\n\n');
+    final rendered = [
+      if (staticPrefix.isNotEmpty) staticPrefix,
+      dynamicSuffix,
+    ].join('\n\n');
+
     return BuiltContext(
-      rendered: [...required, ...accepted, tailBlock].join('\n\n'),
+      rendered: rendered,
       truncatedSections: truncated,
+      staticPrefix: staticPrefix,
+      dynamicSuffix: dynamicSuffix,
     );
   }
 

@@ -142,20 +142,25 @@ class OpenAiSseClient implements LLMClient {
   @override
   Future<String> testConnection({CancelToken? cancelToken}) async {
     final buffer = StringBuffer();
+    var sawReasoning = false;
     await for (final event in streamChat(
       const [LLMMessage(role: LLMRole.user, content: '回复“连接成功”四个字')],
       config: const GenerationConfig(
         temperature: 0,
-        maxTokens: 32,
+        maxTokens: 512,
         includeUsage: false,
       ),
       cancelToken: cancelToken,
     )) {
       if (event is ContentDelta) {
         buffer.write(event.text);
+      } else if (event is ReasoningDelta && event.text.isNotEmpty) {
+        sawReasoning = true;
       }
     }
-    return buffer.toString();
+    final out = buffer.toString().trim();
+    if (out.isEmpty && sawReasoning) return '连接成功（推理模型已响应）';
+    return out;
   }
 
   @override
@@ -219,9 +224,24 @@ class OpenAiSseClient implements LLMClient {
     if (usage is Map) {
       final prompt = (usage['prompt_tokens'] as num?)?.toInt() ?? 0;
       final completion = (usage['completion_tokens'] as num?)?.toInt() ?? 0;
+      final promptDetails = usage['prompt_tokens_details'];
+      final completionDetails = usage['completion_tokens_details'];
+      final cached =
+          (usage['prompt_cache_hit_tokens'] as num?)?.toInt() ??
+          (promptDetails is Map
+              ? (promptDetails['cached_tokens'] as num?)?.toInt() ?? 0
+              : 0);
+      final reasoning = completionDetails is Map
+          ? (completionDetails['reasoning_tokens'] as num?)?.toInt() ?? 0
+          : 0;
       if (prompt > 0 || completion > 0) {
         events.add(
-          UsageReport(promptTokens: prompt, completionTokens: completion),
+          UsageReport(
+            promptTokens: prompt,
+            completionTokens: completion,
+            cachedTokens: cached,
+            reasoningTokens: reasoning,
+          ),
         );
       }
     }

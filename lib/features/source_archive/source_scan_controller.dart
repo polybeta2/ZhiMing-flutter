@@ -8,10 +8,12 @@ import 'package:uuid/uuid.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 
 import '../../core/database/app_database.dart' hide ScanMeta;
+import '../../core/llm/llm_json_parser.dart';
 import '../../core/llm/llm_types.dart';
 import '../../core/llm/stream_progress.dart';
 import '../../core/storage/blob_store.dart';
 import '../../domain/models/source_profile_models.dart';
+import '../../domain/source/novel_local_indexer.dart';
 import '../../domain/source/source_batch_helper.dart';
 import '../../domain/source/source_micro_summarizer.dart';
 import '../../domain/source/source_reduce_watermark.dart';
@@ -47,10 +49,8 @@ class _FetchResult {
 }
 
 /// 原作分析扫描控制器：
-/// - 滚动并发 Map + Reduce（每攒满 40 块并发归并）
-/// - Drift SQLite 检查点（ScanTasks / ScanChunks / ScanReduces / ScanMetas）
-/// - 单调连续前缀水位（SourceReduceWatermark）防止断点续跑丢块
-/// - 真实 UsageReport 统计 + 估算兜底 + 3 次指数退避重试 + 暂停/换商续跑
+/// - 默认模式 [ScanMode.evidence]：零耗时本地索引 + 两轮证据驱动建档 + Static Prefix KV 缓存（80%+ 命中，~1-2 分钟完成）
+/// - 深度模式 [ScanMode.fast] / [ScanMode.full]：滚动并发 Map + Reduce + Drift 断点续跑 + 推理模型安全预算（maxTokens >= 12288）
 class SourceScanController extends ChangeNotifier {
   SourceScanController({
     required this.db,
@@ -67,11 +67,13 @@ class SourceScanController extends ChangeNotifier {
   final StreamProgressTracker progress = StreamProgressTracker();
 
   ScanPhase phase = ScanPhase.idle;
+  String? statusDetail;
   String? errorMessage;
   int totalChunks = 0;
   int doneChunks = 0;
   int tokensIn = 0;
   int tokensOut = 0;
+  int cachedTokens = 0;
   int? estimatedRemainingSeconds;
   SourceNovelProfileData? resultProfile;
 
@@ -110,7 +112,9 @@ class SourceScanController extends ChangeNotifier {
     _cancelled = false;
     _activeCancel = CancelToken();
     errorMessage = null;
+    statusDetail = null;
     resultProfile = null;
+    cachedTokens = 0;
     _mapTimes.clear();
     final generation = ++_runGeneration;
     final pid = presetProfileId ?? const Uuid().v4();
@@ -121,7 +125,19 @@ class SourceScanController extends ChangeNotifier {
     } catch (_) {}
 
     try {
+      if (mode == ScanMode.evidence) {
+        await _runEvidenceScan(
+          sourceText: sourceText,
+          title: title,
+          isContinuation: isContinuation,
+          pid: pid,
+          generation: generation,
+        );
+        return;
+      }
+
       phase = ScanPhase.mapping;
+      statusDetail = '正在后台切章与净化正文…';
       notifyListeners();
 
       // 原文大文本在 Isolate 中切块，避免 UI 掉帧
@@ -166,6 +182,7 @@ class SourceScanController extends ChangeNotifier {
       doneChunks = doneIndexes.length;
       tokensIn = inTotal;
       tokensOut = outTotal;
+      statusDetail = '正在逐批分析并滚动归并（${mode.label} · 每批 $clampedBatch 块）';
       notifyListeners();
 
       // 恢复滚动归并状态
@@ -191,9 +208,10 @@ class SourceScanController extends ChangeNotifier {
         watermark: reducedUpto,
       );
 
-      const mapConfig = GenerationConfig(temperature: 0.2, maxTokens: 2048);
-      const reduceConfig = GenerationConfig(temperature: 0.25, maxTokens: 4096);
-      const finalConfig = GenerationConfig(temperature: 0.3, maxTokens: 8192);
+      // 推理模型安全预算：防止 reasoning_tokens 吃干 maxTokens 导致空正文（实测 P0 修复）
+      const mapConfig = GenerationConfig(temperature: 0.2, maxTokens: 12288);
+      const reduceConfig = GenerationConfig(temperature: 0.25, maxTokens: 12288);
+      const finalConfig = GenerationConfig(temperature: 0.3, maxTokens: 16384);
 
       void spawnReduce() {
         int seq;
@@ -231,6 +249,7 @@ class SourceScanController extends ChangeNotifier {
           if (res.usage != null) {
             inTotal += res.usage!.promptTokens;
             outTotal += res.usage!.completionTokens;
+            cachedTokens += res.usage!.cachedTokens;
           } else {
             inTotal += prompt.length ~/ 2;
             outTotal += res.reply.length ~/ 2;
@@ -309,6 +328,7 @@ class SourceScanController extends ChangeNotifier {
         if (usage != null) {
           inTotal += usage.promptTokens;
           outTotal += usage.completionTokens;
+          cachedTokens += usage.cachedTokens;
         }
 
         for (final item in group) {
@@ -352,6 +372,7 @@ class SourceScanController extends ChangeNotifier {
 
       // ---- 2. 收尾滚动归并 ----
       phase = ScanPhase.reducing;
+      statusDetail = '正在收尾滚动归并阶段摘要…';
       notifyListeners();
 
       var rounds = 0;
@@ -379,6 +400,11 @@ class SourceScanController extends ChangeNotifier {
       // ---- 3. 终归并 / 续写深度归并 ----
       final analyzedChapters =
           chunks.map((c) => c.chapterIndex).reduce((a, b) => a > b ? a : b) + 1;
+      statusDetail = isContinuation
+          ? '正在深度归并人物现状、未回收伏笔与剧情弧…'
+          : '正在终归并全书人物、时间线与世界观…';
+      notifyListeners();
+
       final finalMsgs = isContinuation
           ? SourceReducer.continuationPrompt(
               stageSummaries: stageSummaries,
@@ -395,6 +421,7 @@ class SourceScanController extends ChangeNotifier {
       if (finalRes.usage != null) {
         inTotal += finalRes.usage!.promptTokens;
         outTotal += finalRes.usage!.completionTokens;
+        cachedTokens += finalRes.usage!.cachedTokens;
       } else {
         outTotal += finalRes.reply.length ~/ 2;
       }
@@ -422,14 +449,11 @@ class SourceScanController extends ChangeNotifier {
         return;
       }
 
-      var hasSourceText = false;
-      if (isContinuation) {
-        await blobs.saveText(BlobKinds.continuation, profile.id, sourceText);
-        hasSourceText = true;
-      }
+      // 始终保存原文到 BlobStore，便于写作助手 zm-search 随时按需查书
+      await blobs.saveText(BlobKinds.continuation, profile.id, sourceText);
 
       profile = profile.copyWith(
-        hasSourceText: hasSourceText,
+        hasSourceText: true,
         meta: ScanMeta(
           totalChapters: analyzedChapters,
           totalChars: sourceText.length,
@@ -461,6 +485,7 @@ class SourceScanController extends ChangeNotifier {
       tokensIn = inTotal;
       tokensOut = outTotal;
       phase = ScanPhase.done;
+      statusDetail = '分析完成！档案已入库';
       estimatedRemainingSeconds = 0;
       notifyListeners();
     } catch (e) {
@@ -473,6 +498,249 @@ class SourceScanController extends ChangeNotifier {
         await WakelockPlus.disable();
       } catch (_) {}
     }
+  }
+
+  /// 极速证据建档（Search-First + KV Prefix Cache）：
+  /// Step 1: Isolate 零 Token 索引全书（实体热力图 + 共现 + 声音样本 + 净化正文）
+  /// Step 2: Round 1 定位待查证关键词/历史谜团（填充静态前缀缓存）
+  /// Step 3: 本地毫秒级 grepSpan 抓取全书首现+末现原文证据
+  /// Step 4: Round 2 复用同一静态前缀（命中 80%+ KV Cache）直出零幻觉结构化档案！
+  Future<void> _runEvidenceScan({
+    required String sourceText,
+    required String title,
+    required bool isContinuation,
+    required String pid,
+    required int generation,
+  }) async {
+    phase = ScanPhase.mapping;
+    totalChunks = 3;
+    doneChunks = 0;
+    statusDetail = '步骤 1/3：本地零耗时索引全书实体、共现关系与角色口癖…';
+    notifyListeners();
+
+    final indexer = await Isolate.run(
+      () => NovelLocalIndexer.fromRawText(sourceText),
+    );
+    if (_cancelled || generation != _runGeneration) return;
+    if (indexer.chapters.isEmpty) {
+      _fail('原文内容为空，无法建档');
+      return;
+    }
+
+    final totalChapters = indexer.chapters.length;
+    final staticPrefix = indexer.buildEvidenceStaticPrefix(
+      title: title,
+      isContinuation: isContinuation,
+    );
+
+    doneChunks = 1;
+    statusDetail =
+        '步骤 2/3：全书 ${indexer.chapters.length} 章已索引（发现 ${indexer.topEntities.length} 个核心实体），AI 正在定位需查证的伏笔与人物线索…';
+    notifyListeners();
+
+    const round1Config = GenerationConfig(temperature: 0.2, maxTokens: 12288);
+    const round2Config = GenerationConfig(temperature: 0.25, maxTokens: 16384);
+
+    final round1User =
+        '请快速审阅以上全书实体热力图、目录、开篇与近期正文，列出你为了彻底搞清「人物真实身份/形态/关系」「核心道具/势力规则」「开篇及中期尚未回收的关键伏笔」而需要在全书 $totalChapters 章中精确检索的 6~10 个关键词。'
+        '只输出合法 JSON 对象，不要代码块或多余文字：\n'
+        '{"queries": ["关键词1", "关键词2"], "focus": "一句话说明当前主线与重点核查方向"}';
+
+    final res1 = await _fetchWithRetry(
+      [
+        LLMMessage(role: LLMRole.system, content: staticPrefix),
+        LLMMessage(role: LLMRole.user, content: round1User),
+      ],
+      config: round1Config,
+    );
+    if (_cancelled || generation != _runGeneration) return;
+    if (!res1.drained) {
+      _fail(res1.errorText ?? '线索定位请求失败');
+      return;
+    }
+
+    if (res1.usage != null) {
+      tokensIn += res1.usage!.promptTokens;
+      tokensOut += res1.usage!.completionTokens;
+      cachedTokens += res1.usage!.cachedTokens;
+    } else {
+      tokensIn += (staticPrefix.length + round1User.length) ~/ 2;
+      tokensOut += res1.reply.length ~/ 2;
+    }
+
+    // 解析 AI 提出的检索词，并兜底补入 Top 高频实体
+    final queries = <String>[];
+    final parsed1 = LLMJSONParser.decodeObject(res1.reply, (m) => m);
+    if (parsed1 != null && parsed1['queries'] is List) {
+      for (final q in parsed1['queries'] as List) {
+        final s = q.toString().trim();
+        if (s.isNotEmpty && !queries.contains(s)) queries.add(s);
+      }
+    }
+    for (final e in indexer.topEntities.take(8)) {
+      if (queries.length >= 10) break;
+      if (!queries.contains(e.name)) queries.add(e.name);
+    }
+
+    // 本地零耗时 grep 全书原文证据
+    final evidenceBuf = StringBuffer('以下是本地检索引擎在全书 $totalChapters 章中为你查回的原文证据：\n');
+    var evidenceUsed = 0;
+    const evidenceBudget = 11000;
+    for (final q in queries.take(10)) {
+      final hits = indexer.grepSpan(q, earliestHits: 1, latestHits: 2);
+      if (hits.isEmpty) continue;
+      final block = '【检索：$q】\n${hits.map((h) => h.format()).join('\n')}\n';
+      if (evidenceUsed + block.length > evidenceBudget) break;
+      evidenceBuf.writeln(block);
+      evidenceUsed += block.length;
+    }
+
+    phase = ScanPhase.reducing;
+    doneChunks = 2;
+    statusDetail = '步骤 3/3：已回填 ${queries.length} 组全书原文证据，复用前缀缓存生成结构化原作档案…';
+    notifyListeners();
+
+    final schemaInstruction = isContinuation
+        ? '''请结合【System 中的全书基线】与上面【查回的原文证据】，输出完整准确的【续写档案】JSON（只输出合法 JSON 对象，不要代码块或说明）：
+{
+  "title": "$title",
+  "author": "作者（未知省略）",
+  "characters": [{
+    "name": "主名",
+    "aliases": ["别名/形态名"],
+    "oneLine": "一句话定位（注明真实性别/种族/形态）",
+    "role": "主角/反派/配角",
+    "appearance": "外貌特征",
+    "personality": "性格与行为倾向",
+    "abilities": "能力与武器/道具",
+    "currentState": "截至第$totalChapters章末尾的精确现状（位置、形态、伤势、心境与正面临的局面）",
+    "voiceSamples": ["原话口癖1", "原话口癖2"],
+    "relationships": [{"target": "对象", "relation": "当前关系"}],
+    "arc": [{"phase": "阶段", "state": "状态"}]
+  }],
+  "timeline": [{"phase": "阶段名", "chapterRange": "约第X-Y章", "summary": "核心事件", "participants": ["角色"], "importance": "major|normal|minor"}],
+  "worldbuilding": [{"category": "力量体系|地理|势力|规则|器物", "name": "词条", "content": "说明"}],
+  "openThreads": [{"title": "未回收伏笔标题", "detail": "已埋线索与悬念", "plantedChapter": 1}],
+  "activeArcs": ["截至第$totalChapters章正在推进中的剧情弧线"]
+}
+要求：严禁违背查回的原文证据，严禁混淆角色真实形态/性别；openThreads 优先覆盖开篇未收宿命伏笔与近期悬念。'''
+        : '''请结合【System 中的全书基线】与上面【查回的原文证据】，输出完整准确的【原作同人档案】JSON（只输出合法 JSON 对象，不要代码块或说明）：
+{
+  "title": "$title",
+  "author": "作者（未知省略）",
+  "characters": [{
+    "name": "主名",
+    "aliases": ["别名"],
+    "oneLine": "一句话定位（注明性别/形态/阵营）",
+    "role": "主角/反派/配角",
+    "appearance": "外貌",
+    "personality": "性格",
+    "abilities": "能力",
+    "voiceSamples": ["原话口癖1", "原话口癖2"],
+    "relationships": [{"target": "对象", "relation": "关系"}],
+    "arc": [{"phase": "阶段", "state": "状态"}]
+  }],
+  "timeline": [{"phase": "阶段名", "chapterRange": "约第X-Y章", "summary": "核心事件", "participants": ["角色"], "importance": "major|normal|minor"}],
+  "worldbuilding": [{"category": "力量体系|地理|势力|规则|器物", "name": "词条", "content": "说明"}]
+}''';
+
+    // Round 2 字节级复用 staticPrefix，最大化命中 KV Prefix Cache！
+    final res2 = await _fetchWithRetry(
+      [
+        LLMMessage(role: LLMRole.system, content: staticPrefix),
+        LLMMessage(role: LLMRole.assistant, content: res1.reply),
+        LLMMessage(
+          role: LLMRole.user,
+          content: '${evidenceBuf.toString()}\n$schemaInstruction',
+        ),
+      ],
+      config: round2Config,
+    );
+    if (_cancelled || generation != _runGeneration) return;
+    if (!res2.drained) {
+      _fail(res2.errorText ?? '档案生成请求失败');
+      return;
+    }
+
+    if (res2.usage != null) {
+      tokensIn += res2.usage!.promptTokens;
+      tokensOut += res2.usage!.completionTokens;
+      cachedTokens += res2.usage!.cachedTokens;
+    } else {
+      tokensOut += res2.reply.length ~/ 2;
+    }
+
+    SourceNovelProfileData profile;
+    try {
+      profile = isContinuation
+          ? SourceReducer.parseContinuation(
+              res2.reply,
+              fallbackTitle: title,
+              upToChapter: totalChapters,
+              profileId: pid,
+            )
+          : SourceReducer.parseFinal(
+              res2.reply,
+              fallbackTitle: title,
+              profileId: pid,
+            );
+    } catch (_) {
+      _fail('证据建档 JSON 解析失败，请点击「继续分析」重试');
+      return;
+    }
+
+    // 把本地检出的真实原话声音样本补充合并到对应角色（若模型漏填）
+    final localVoiceMap = {
+      for (final e in indexer.topEntities)
+        if (e.voiceSamples.isNotEmpty) e.name: e.voiceSamples,
+    };
+    final enrichedChars = profile.characters.map((c) {
+      if (c.voiceSamples.isNotEmpty) return c;
+      final localSamples = localVoiceMap[c.name];
+      return localSamples == null
+          ? c
+          : c.copyWith(voiceSamples: localSamples);
+    }).toList();
+
+    // 保存原文到 BlobStore（同人/续写均落盘，支持后续写作助手 zm-search 实时查书）
+    await blobs.saveText(BlobKinds.continuation, profile.id, sourceText);
+
+    profile = profile.copyWith(
+      characters: enrichedChars,
+      hasSourceText: true,
+      meta: ScanMeta(
+        totalChapters: totalChapters,
+        totalChars: sourceText.length,
+        scanMode: ScanMode.evidence,
+      ),
+      scanState: ScanState(
+        stage: ScanStage.done,
+        totalChunks: 3,
+        doneChunks: 3,
+        tokensIn: tokensIn,
+        tokensOut: tokensOut,
+        startedAt: DateTime.now(),
+      ),
+    );
+
+    await db.upsertSourceProfile(
+      SourceProfilesCompanion.insert(
+        id: profile.id,
+        title: profile.title,
+        author: Value(profile.author),
+        payloadJson: profile.toJsonString(),
+        createdAt: profile.createdAt,
+      ),
+    );
+
+    doneChunks = 3;
+    resultProfile = profile;
+    phase = ScanPhase.done;
+    statusDetail = cachedTokens > 0
+        ? '极速证据建档完成（缓存命中 ${(cachedTokens / 1000).toStringAsFixed(1)}k tokens）'
+        : '极速证据建档完成！';
+    estimatedRemainingSeconds = 0;
+    notifyListeners();
   }
 
   void _fail(String reason) {

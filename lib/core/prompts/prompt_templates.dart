@@ -8,9 +8,13 @@ abstract final class PromptTemplates {
     required PromptLibraryState library,
     required String renderedContext,
     required int wordTarget,
+    String? staticContext,
     String? extra,
   }) {
-    final system = library.resolvedText(PromptID.continueWriting);
+    var system = library.resolvedText(PromptID.continueWriting);
+    if (staticContext != null && staticContext.trim().isNotEmpty) {
+      system = '$system\n\n${staticContext.trim()}';
+    }
     final suffix = (extra != null && extra.trim().isNotEmpty)
         ? '附加要求：${extra.trim()}'
         : '';
@@ -25,9 +29,13 @@ abstract final class PromptTemplates {
     required PromptLibraryState library,
     required String renderedContext,
     required int wordTarget,
+    String? staticContext,
     String? extra,
   }) {
-    final system = library.resolvedText(PromptID.writing);
+    var system = library.resolvedText(PromptID.writing);
+    if (staticContext != null && staticContext.trim().isNotEmpty) {
+      system = '$system\n\n${staticContext.trim()}';
+    }
     final suffix = (extra != null && extra.trim().isNotEmpty)
         ? '附加要求：${extra.trim()}'
         : '';

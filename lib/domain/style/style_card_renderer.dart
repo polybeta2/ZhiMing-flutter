@@ -20,14 +20,26 @@ abstract final class StyleCardRenderer {
         if (profile.fingerprintSummary.isNotEmpty) {
           sections.add('风格指纹：${profile.fingerprintSummary}');
         }
-        _appendNumbered('必遵规则', profile.mustRules, sections);
+        final m = profile.localMetrics;
+        if (m.sentenceCount > 0) {
+          final med = m.medianSentenceLength.round();
+          final dlgPct = (m.dialogueLineRatio * 100).round();
+          sections.add(
+            '实测节奏区间：中位句长约 $med 字（建议控制在 ${(med - 3).clamp(6, 40)}~${(med + 4).clamp(10, 50)} 字），'
+            '对话行占比约 $dlgPct%；请保持自然呼吸感，严禁为追求短句强行写碎成电报体。',
+          );
+        }
+        // 聚焦 Top 7 最具辨识度的核心规则，避免 15+ 条细碎禁令过度规训压扁语感
+        _appendNumbered('核心风格规则', profile.mustRules.take(7).toList(), sections);
         final layers = _layerLines(profile);
         if (layers != null) sections.add(layers);
-        _appendNumbered(
-          '绝对禁止',
-          [...profile.avoidRules, ...profile.antiAI.forbiddenPatterns],
-          sections,
-        );
+        final dedupAvoid = <String>[];
+        for (final r in [...profile.avoidRules, ...profile.antiAI.forbiddenPatterns]) {
+          final t = r.trim();
+          if (t.isNotEmpty && !dedupAvoid.contains(t)) dedupAvoid.add(t);
+          if (dedupAvoid.length >= 8) break;
+        }
+        _appendNumbered('绝对禁止', dedupAvoid, sections);
         _appendExamples(profile.examples, sections);
       case StyleCardVariant.outline:
         sections.add('【文风档案：${profile.name}】');

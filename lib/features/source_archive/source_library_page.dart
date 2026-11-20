@@ -54,7 +54,7 @@ class _SourceLibraryPageState extends ConsumerState<SourceLibraryPage> {
     );
     final titleCtrl = TextEditingController(text: defaultTitle);
     var useBatchCopy = false;
-    var mode = ScanMode.fast;
+    var mode = ScanMode.evidence;
     var batchSize = 3;
 
     final start = await showDialog<bool>(

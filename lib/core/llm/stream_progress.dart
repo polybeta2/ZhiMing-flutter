@@ -14,6 +14,7 @@ class StreamProgressState {
     this.elapsedSeconds = 0,
     this.promptTokens = 0,
     this.completionTokens = 0,
+    this.cachedTokens = 0,
   });
 
   final StreamStage stage;
@@ -22,16 +23,23 @@ class StreamProgressState {
   final double elapsedSeconds;
   final int promptTokens;
   final int completionTokens;
+  final int cachedTokens;
 
   bool get isActive => stage != StreamStage.idle;
 
+  double get cacheHitRate =>
+      promptTokens > 0 ? (cachedTokens / promptTokens).clamp(0.0, 1.0) : 0.0;
+
   String get statusText {
     final sec = '${elapsedSeconds.toStringAsFixed(1)}s';
+    final cacheTag = cachedTokens > 0 && promptTokens > 0
+        ? ' · 缓存命中 ${(cacheHitRate * 100).round()}%'
+        : '';
     return switch (stage) {
       StreamStage.idle => '',
       StreamStage.waitingFirstToken => '正在等待首 Token · $sec',
-      StreamStage.thinking => '深度思考 $reasoningChars 字 · $sec',
-      StreamStage.outputting => '正在输出 $contentChars 字 · $sec',
+      StreamStage.thinking => '深度思考 $reasoningChars 字 · $sec$cacheTag',
+      StreamStage.outputting => '正在输出 $contentChars 字 · $sec$cacheTag',
     };
   }
 
@@ -42,6 +50,7 @@ class StreamProgressState {
     double? elapsedSeconds,
     int? promptTokens,
     int? completionTokens,
+    int? cachedTokens,
   }) {
     return StreamProgressState(
       stage: stage ?? this.stage,
@@ -50,6 +59,7 @@ class StreamProgressState {
       elapsedSeconds: elapsedSeconds ?? this.elapsedSeconds,
       promptTokens: promptTokens ?? this.promptTokens,
       completionTokens: completionTokens ?? this.completionTokens,
+      cachedTokens: cachedTokens ?? this.cachedTokens,
     );
   }
 }
@@ -77,10 +87,15 @@ class StreamProgressTracker extends ValueNotifier<StreamProgressState> {
         final nextCount = value.contentChars + text.length;
         _enter(StreamStage.outputting);
         value = value.copyWith(contentChars: nextCount);
-      case UsageReport(:final promptTokens, :final completionTokens):
+      case UsageReport(
+        :final promptTokens,
+        :final completionTokens,
+        :final cachedTokens,
+      ):
         value = value.copyWith(
           promptTokens: promptTokens,
           completionTokens: completionTokens,
+          cachedTokens: cachedTokens,
         );
     }
   }

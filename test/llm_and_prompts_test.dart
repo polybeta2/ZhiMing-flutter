@@ -154,6 +154,28 @@ void main() {
         0,
       );
     });
+
+    test('SSE usage parses cached_tokens & reasoning_tokens and staticContext stays in system', () {
+      final evs = OpenAiSseClient.extractEvents(
+        '{"choices":[],"usage":{"prompt_tokens":10000,"completion_tokens":500,"prompt_cache_hit_tokens":8700,"completion_tokens_details":{"reasoning_tokens":320}}}',
+      );
+      final u = evs.whereType<UsageReport>().single;
+      expect(u.cachedTokens, 8700);
+      expect(u.reasoningTokens, 320);
+      expect(u.cacheHitRate, closeTo(0.87, 0.001));
+
+      final msgs = PromptTemplates.continueWriting(
+        library: const PromptLibraryState(),
+        staticContext: '【静态世界观与角色表】',
+        renderedContext: '【本章动态细纲】',
+        wordTarget: 1500,
+      );
+      expect(msgs.first.role, LLMRole.system);
+      expect(msgs.first.content, contains('【静态世界观与角色表】'));
+      expect(msgs.last.role, LLMRole.user);
+      expect(msgs.last.content, isNot(contains('【静态世界观与角色表】')));
+      expect(msgs.last.content, contains('【本章动态细纲】'));
+    });
   });
 
   group('ProseChecker', () {

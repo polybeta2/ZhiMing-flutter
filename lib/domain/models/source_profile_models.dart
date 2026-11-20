@@ -3,15 +3,19 @@ import 'dart:convert';
 import 'package:uuid/uuid.dart';
 
 enum ScanMode {
-  fast('fast', '快扫'),
-  full('full', '精扫');
+  evidence('evidence', '极速证据建档（推荐）'),
+  fast('fast', '全书快扫'),
+  full('full', '全书精扫');
 
   const ScanMode(this.raw, this.label);
   final String raw;
   final String label;
 
-  static ScanMode fromRaw(String? raw) =>
-      raw == 'full' ? ScanMode.full : ScanMode.fast;
+  static ScanMode fromRaw(String? raw) => switch (raw) {
+    'full' => ScanMode.full,
+    'fast' => ScanMode.fast,
+    _ => ScanMode.evidence,
+  };
 }
 
 enum ScanStage {
@@ -155,6 +159,7 @@ class CanonCharacter {
     this.relationships = const [],
     this.arc = const [],
     this.currentState,
+    this.voiceSamples = const [],
   });
 
   final String name;
@@ -167,6 +172,7 @@ class CanonCharacter {
   final List<CanonRelationship> relationships;
   final List<CanonArc> arc;
   final String? currentState;
+  final List<String> voiceSamples;
 
   CanonCharacter copyWith({
     String? name,
@@ -179,6 +185,7 @@ class CanonCharacter {
     List<CanonRelationship>? relationships,
     List<CanonArc>? arc,
     String? currentState,
+    List<String>? voiceSamples,
   }) {
     return CanonCharacter(
       name: name ?? this.name,
@@ -191,6 +198,7 @@ class CanonCharacter {
       relationships: relationships ?? this.relationships,
       arc: arc ?? this.arc,
       currentState: currentState ?? this.currentState,
+      voiceSamples: voiceSamples ?? this.voiceSamples,
     );
   }
 
@@ -205,6 +213,7 @@ class CanonCharacter {
     'relationships': relationships.map((e) => e.toJson()).toList(),
     'arc': arc.map((e) => e.toJson()).toList(),
     if (currentState != null) 'currentState': currentState,
+    if (voiceSamples.isNotEmpty) 'voiceSamples': voiceSamples,
   };
 
   factory CanonCharacter.fromJson(Map<String, dynamic> json) {
@@ -225,6 +234,7 @@ class CanonCharacter {
           .map((e) => CanonArc.fromJson(e.cast<String, dynamic>()))
           .toList(),
       currentState: _optString(json['currentState'] ?? json['current_state']),
+      voiceSamples: _stringList(json['voiceSamples'] ?? json['voice_samples']),
     );
   }
 }

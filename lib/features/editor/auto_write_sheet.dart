@@ -157,7 +157,10 @@ class _AutoWriteSheetState extends ConsumerState<AutoWriteSheet> {
         );
         var writeMsgs = PromptTemplates.writing(
           library: lib,
-          renderedContext: ctx.rendered,
+          staticContext: ctx.staticPrefix,
+          renderedContext: ctx.dynamicSuffix.isNotEmpty
+              ? ctx.dynamicSuffix
+              : ctx.rendered,
           wordTarget: _wordTarget,
         );
         writeMsgs = PromptTemplates.applyingExtra(r18Text, writeMsgs);
