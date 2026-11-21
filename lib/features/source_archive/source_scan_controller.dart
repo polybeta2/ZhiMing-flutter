@@ -601,7 +601,7 @@ class SourceScanController extends ChangeNotifier {
     notifyListeners();
 
     final schemaInstruction = isContinuation
-        ? '''请结合【System 中的全书基线】与上面【查回的原文证据】，输出完整准确的【续写档案】JSON（只输出合法 JSON 对象，不要代码块或说明）：
+        ? '''请结合【System 中的全书基线】与上面【查回的原文证据】，输出完整、精炼、闭合的【续写档案】JSON（只输出合法 JSON 对象，不要代码块或说明）：
 {
   "title": "$title",
   "author": "作者（未知省略）",
@@ -610,21 +610,24 @@ class SourceScanController extends ChangeNotifier {
     "aliases": ["别名/形态名"],
     "oneLine": "一句话定位（注明真实性别/种族/形态）",
     "role": "主角/反派/配角",
-    "appearance": "外貌特征",
-    "personality": "性格与行为倾向",
-    "abilities": "能力与武器/道具",
-    "currentState": "截至第$totalChapters章末尾的精确现状（位置、形态、伤势、心境与正面临的局面）",
+    "appearance": "外貌特征（≤40字）",
+    "personality": "性格与行为倾向（≤50字）",
+    "abilities": "能力与武器/道具（≤50字）",
+    "currentState": "截至第$totalChapters章末尾的精确现状（位置、形态、伤势、心境，≤70字）",
     "voiceSamples": ["原话口癖1", "原话口癖2"],
     "relationships": [{"target": "对象", "relation": "当前关系"}],
     "arc": [{"phase": "阶段", "state": "状态"}]
   }],
-  "timeline": [{"phase": "阶段名", "chapterRange": "约第X-Y章", "summary": "核心事件", "participants": ["角色"], "importance": "major|normal|minor"}],
-  "worldbuilding": [{"category": "力量体系|地理|势力|规则|器物", "name": "词条", "content": "说明"}],
-  "openThreads": [{"title": "未回收伏笔标题", "detail": "已埋线索与悬念", "plantedChapter": 1}],
+  "timeline": [{"phase": "阶段名", "chapterRange": "约第X-Y章", "summary": "核心事件（≤70字）", "participants": ["角色"], "importance": "major|normal|minor"}],
+  "worldbuilding": [{"category": "力量体系|地理|势力|规则|器物", "name": "词条", "content": "说明（≤80字）"}],
+  "openThreads": [{"title": "未回收伏笔标题", "detail": "已埋线索与悬念（≤70字）", "plantedChapter": 1}],
   "activeArcs": ["截至第$totalChapters章正在推进中的剧情弧线"]
 }
-要求：严禁违背查回的原文证据，严禁混淆角色真实形态/性别；openThreads 优先覆盖开篇未收宿命伏笔与近期悬念。'''
-        : '''请结合【System 中的全书基线】与上面【查回的原文证据】，输出完整准确的【原作同人档案】JSON（只输出合法 JSON 对象，不要代码块或说明）：
+数量与防截断硬约束：
+1. characters 精选 8~14 名核心角色（每名角色 arc 至多 2~3 条），严禁违背查回的原文证据或混淆真实形态/性别；
+2. timeline 精选 8~14 个关键剧情里程碑；worldbuilding 精选 8~14 条核心规则/势力/道具；openThreads 精选 5~10 条最重要未回收伏笔；activeArcs 3~5 条；
+3. 请保持字段凝练紧凑，务必输出完整闭合的单个 JSON 对象，避免超长被截断。'''
+        : '''请结合【System 中的全书基线】与上面【查回的原文证据】，输出完整、精炼、闭合的【原作同人档案】JSON（只输出合法 JSON 对象，不要代码块或说明）：
 {
   "title": "$title",
   "author": "作者（未知省略）",
@@ -633,61 +636,88 @@ class SourceScanController extends ChangeNotifier {
     "aliases": ["别名"],
     "oneLine": "一句话定位（注明性别/形态/阵营）",
     "role": "主角/反派/配角",
-    "appearance": "外貌",
-    "personality": "性格",
-    "abilities": "能力",
+    "appearance": "外貌（≤40字）",
+    "personality": "性格（≤50字）",
+    "abilities": "能力（≤50字）",
     "voiceSamples": ["原话口癖1", "原话口癖2"],
     "relationships": [{"target": "对象", "relation": "关系"}],
     "arc": [{"phase": "阶段", "state": "状态"}]
   }],
-  "timeline": [{"phase": "阶段名", "chapterRange": "约第X-Y章", "summary": "核心事件", "participants": ["角色"], "importance": "major|normal|minor"}],
-  "worldbuilding": [{"category": "力量体系|地理|势力|规则|器物", "name": "词条", "content": "说明"}]
-}''';
+  "timeline": [{"phase": "阶段名", "chapterRange": "约第X-Y章", "summary": "核心事件（≤70字）", "participants": ["角色"], "importance": "major|normal|minor"}],
+  "worldbuilding": [{"category": "力量体系|地理|势力|规则|器物", "name": "词条", "content": "说明（≤80字）"}]
+}
+数量与防截断硬约束：characters 8~14 人、timeline 8~14 项、worldbuilding 8~14 项，字段精炼，确保完整闭合单个 JSON 对象。''';
 
-    // Round 2 字节级复用 staticPrefix，最大化命中 KV Prefix Cache！
-    final res2 = await _fetchWithRetry(
-      [
-        LLMMessage(role: LLMRole.system, content: staticPrefix),
-        LLMMessage(role: LLMRole.assistant, content: res1.reply),
-        LLMMessage(
-          role: LLMRole.user,
-          content: '${evidenceBuf.toString()}\n$schemaInstruction',
-        ),
-      ],
-      config: round2Config,
-    );
-    if (_cancelled || generation != _runGeneration) return;
-    if (!res2.drained) {
-      _fail(res2.errorText ?? '档案生成请求失败');
+    // Round 2 严格保持 system -> user(R1) -> assistant(R1) -> user(R2) 轮次，最大化命中 KV Prefix Cache！
+    final round2Messages = [
+      LLMMessage(role: LLMRole.system, content: staticPrefix),
+      LLMMessage(role: LLMRole.user, content: round1User),
+      LLMMessage(role: LLMRole.assistant, content: res1.reply),
+      LLMMessage(
+        role: LLMRole.user,
+        content: '${evidenceBuf.toString()}\n$schemaInstruction',
+      ),
+    ];
+
+    SourceNovelProfileData? parsedProfile;
+    String? lastParseError;
+
+    for (var attempt = 0; attempt < 2; attempt++) {
+      final msgs = attempt == 0
+          ? round2Messages
+          : [
+              ...round2Messages.sublist(0, 3),
+              LLMMessage(
+                role: LLMRole.user,
+                content:
+                    '${evidenceBuf.toString()}\n$schemaInstruction\n\n'
+                    '【重要】上次输出因过长被截断或格式不合法，本次请进一步精简每条字数（仅输出 Top 8 核心人物、Top 8 世界观、Top 8 时间线、Top 6 未回收伏笔），确保 JSON 100% 完整闭合！',
+              ),
+            ];
+      if (attempt == 1) {
+        statusDetail = '步骤 3/3：上次输出疑似截断，正在自动切换紧凑模式重试一次…';
+        notifyListeners();
+      }
+      final res2 = await _fetchWithRetry(msgs, config: round2Config);
+      if (_cancelled || generation != _runGeneration) return;
+      if (!res2.drained) {
+        _fail(res2.errorText ?? '档案生成请求失败');
+        return;
+      }
+      if (res2.usage != null) {
+        tokensIn += res2.usage!.promptTokens;
+        tokensOut += res2.usage!.completionTokens;
+        cachedTokens += res2.usage!.cachedTokens;
+      } else {
+        tokensOut += res2.reply.length ~/ 2;
+      }
+
+      try {
+        parsedProfile = isContinuation
+            ? SourceReducer.parseContinuation(
+                res2.reply,
+                fallbackTitle: title,
+                upToChapter: totalChapters,
+                profileId: pid,
+              )
+            : SourceReducer.parseFinal(
+                res2.reply,
+                fallbackTitle: title,
+                profileId: pid,
+              );
+        break;
+      } catch (e) {
+        lastParseError = e.toString();
+      }
+    }
+
+    if (parsedProfile == null) {
+      _fail(
+        '证据建档解析失败（${lastParseError ?? "未输出有效人物/设定 JSON"}），请点击「继续分析」重试或更换模型',
+      );
       return;
     }
-
-    if (res2.usage != null) {
-      tokensIn += res2.usage!.promptTokens;
-      tokensOut += res2.usage!.completionTokens;
-      cachedTokens += res2.usage!.cachedTokens;
-    } else {
-      tokensOut += res2.reply.length ~/ 2;
-    }
-
-    SourceNovelProfileData profile;
-    try {
-      profile = isContinuation
-          ? SourceReducer.parseContinuation(
-              res2.reply,
-              fallbackTitle: title,
-              upToChapter: totalChapters,
-              profileId: pid,
-            )
-          : SourceReducer.parseFinal(
-              res2.reply,
-              fallbackTitle: title,
-              profileId: pid,
-            );
-    } catch (_) {
-      _fail('证据建档 JSON 解析失败，请点击「继续分析」重试');
-      return;
-    }
+    var profile = parsedProfile;
 
     // 把本地检出的真实原话声音样本补充合并到对应角色（若模型漏填）
     final localVoiceMap = {

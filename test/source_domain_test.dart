@@ -201,7 +201,16 @@ void main() {
             name: '陈默',
             aliases: ['默哥'],
             oneLine: '星图测绘师',
+            personality: '冷静',
+            voiceSamples: ['星图不会说谎'],
             currentState: '刚穿过跃迁门',
+          ),
+        ],
+        timeline: const [
+          CanonEvent(
+            phase: '启航篇',
+            chapterRange: '第1-2章',
+            summary: '陈默离开星港并穿过跃迁门',
           ),
         ],
         worldbuilding: const [
@@ -210,6 +219,7 @@ void main() {
         openThreads: const [
           CanonThread(title: '黑匣子密码', detail: '尚未破译', plantedChapter: 1),
         ],
+        activeArcs: const ['破译黑匣子并逃离白帆会追捕'],
       );
 
       await blobs.saveText(
@@ -224,18 +234,24 @@ void main() {
       final volumes = await db.getVolumes(novelId);
       expect(volumes.length, 2);
       expect(volumes.first.name, '原作（2 章）');
+      expect(volumes.first.outline, contains('启航篇'));
+      expect(volumes.last.outline, contains('破译黑匣子'));
 
       final origChapters = await db.getChaptersByVolume(volumes.first.id);
       expect(origChapters.length, 2);
       expect(origChapters.every((c) => c.isOriginal), isTrue);
+      expect(origChapters.first.detailedOutline, contains('启航篇'));
+      expect(origChapters.last.detailedOutline, contains('断更处正在推进的主线'));
 
       final chars = await db.getCharacters(novelId);
       expect(chars.length, 1);
       expect(chars.first.physicalState, '刚穿过跃迁门');
+      expect(chars.first.personality, contains('星图不会说谎'));
 
       final worlds = await db.getWorldEntries(novelId);
       expect(worlds.length, 1);
       expect(worlds.first.category, '势力');
+      expect(worlds.first.keywordsJson, contains('白帆会'));
 
       final fs = await db.getForeshadowings(novelId);
       expect(fs.length, 1);
@@ -244,6 +260,44 @@ void main() {
       final threads = await db.getChatThreads(novelId);
       expect(threads.first.purpose, 'creation');
       expect(threads.first.skipsClarification, isTrue);
+    });
+
+    test('SourceReducer recovers truncated top-level JSON and rejects empty-shell inner objects', () {
+      // 模拟 Round 2 撞上 maxTokens 截断：顶部未闭合但内部已有完整的 openThread 对象
+      const truncated = '''
+{
+  "title": "诡异降临：开局白捡一只可爱萝莉",
+  "characters": [
+    {"name": "莫烬", "role": "主角", "currentState": "刚经历狼人形态觉醒"},
+    {"name": "爱丽丝", "role": "核心角色", "currentState": "仍在追寻莫烬"}
+  ],
+  "worldbuilding": [
+    {"category": "规则", "name": "规则型灾祸", "content": "必须按规则规避"}
+  ],
+  "openThreads": [
+    {"title": "爱丽丝的“永远在一起”追杀宿命", "detail": "开篇留下的宿命伏笔", "plantedChapter": 1},
+    {"title": "被截断的下一条伏笔", "detail": "写到一半突然断''';
+
+      final recovered = SourceReducer.parseContinuation(
+        truncated,
+        fallbackTitle: '诡异降临：开局白捡一只可爱萝莉',
+        upToChapter: 250,
+      );
+      expect(recovered.title, '诡异降临：开局白捡一只可爱萝莉');
+      expect(recovered.characters.length, 2);
+      expect(recovered.worldbuilding.length, 1);
+      expect(recovered.openThreads.length, greaterThanOrEqualTo(1));
+      expect(recovered.openThreads.first.title, contains('爱丽丝'));
+
+      // 纯空壳 JSON（仅有一个 title 字段）必须直接报错，严禁当作完整档案入库
+      expect(
+        () => SourceReducer.parseContinuation(
+          '{"title": "爱丽丝的“永远在一起”追杀宿命", "detail": "某条伏笔"}',
+          fallbackTitle: '诡异降临：开局白捡一只可爱萝莉',
+          upToChapter: 250,
+        ),
+        throwsFormatException,
+      );
     });
   });
 }

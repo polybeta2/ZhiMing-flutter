@@ -72,7 +72,39 @@ void main() {
       final chapters = StyleChapterSampler.split(text);
       expect(chapters.length, 4);
       expect(chapters.map((c) => c.number), [1, 2, 3, 4]);
-      expect(chapters[2].body, contains('178'));
+      expect(chapters[1].body, contains('178'));
+    });
+
+    test('preserves author typo duplicate chapter numbers with distinct bodies & stays idempotent on re-split', () {
+      final bodyA = '这是第三十八章第一篇完整正文内容。' * 20;
+      final bodyB = '这是作者笔误重号的第二篇完整正文内容。' * 20;
+      final bodyC = '这是第三十九章狼人形态的完整正文。' * 20;
+      final text = '''
+第37章 小狼崽
+$bodyA
+第38章 哪儿都不会去
+$bodyA
+第38章 没有威胁的小糖果
+$bodyB
+第39章 狼人形态
+$bodyC
+''';
+      final first = StyleChapterSampler.split(text);
+      expect(first.length, 4);
+      expect(first.map((c) => c.marker).toList(), [
+        '第37章 小狼崽',
+        '第38章 哪儿都不会去',
+        '第38章 没有威胁的小糖果',
+        '第39章 狼人形态',
+      ]);
+      expect(first.every((c) => c.body.length >= 200), isTrue);
+
+      // 二次切章必须严格幂等（不产生 0 字空章或标题倒挂）
+      final rejoined = first.map((c) => '${c.marker}\n${c.body}').join('\n\n');
+      final second = StyleChapterSampler.split(rejoined);
+      expect(second.length, first.length);
+      expect(second.map((c) => c.marker).toList(), first.map((c) => c.marker).toList());
+      expect(second.every((c) => c.body.length >= 200), isTrue);
     });
 
     test('selectInitial & expand stay within maxChapters', () {

@@ -91,7 +91,24 @@ abstract final class StyleChapterSampler {
           ),
         );
       } else {
-        pendingDrop.add('${ch.marker}\n${ch.body}');
+        final droppedText = '${ch.marker}\n${ch.body}'.trim();
+        if (result.isNotEmpty) {
+          // 伪标题原本出现在上一章正文内部，归并回上一章末尾，避免顶空下一章并破坏幂等切章
+          final prev = result.removeLast();
+          final merged = prev.body.isEmpty
+              ? droppedText
+              : '${prev.body}\n$droppedText';
+          result.add(
+            SampleChapter(
+              marker: prev.marker,
+              number: prev.number,
+              symbol: prev.symbol,
+              body: NovelTextCleaner.cleanChapterBody(merged),
+            ),
+          );
+        } else {
+          pendingDrop.add(droppedText);
+        }
       }
     }
     if (pendingDrop.isNotEmpty && result.isNotEmpty) {
@@ -133,12 +150,23 @@ abstract final class StyleChapterSampler {
 
     final keep = {for (var i = 0; i < raw.length; i++) i};
     int? lastKept;
+    int? lastKeptOffset;
     for (var pos = 0; pos < numbered.length; pos++) {
       final item = numbered[pos];
       if (lastKept != null) {
         if (item.number == lastKept) {
-          keep.remove(item.offset);
-          continue;
+          final prevRaw = raw[lastKeptOffset!];
+          final curRaw = raw[item.offset];
+          final sameTitle = prevRaw.marker.trim() == curRaw.marker.trim();
+          final bothSubstantial =
+              prevRaw.body.trim().length >= 200 &&
+              curRaw.body.trim().length >= 200;
+          // 原作作者常见笔误：连续两章标成同一章号但副标题不同且均有完整正文（如两章「第38章」），必须保留！
+          // 仅当标题完全相同或任一侧正文过短（目录/重复标题回声）时才裁决丢弃。
+          if (sameTitle || !bothSubstantial) {
+            keep.remove(item.offset);
+            continue;
+          }
         }
         if (item.number > lastKept + tolerance) {
           var returnsLater = false;
@@ -155,6 +183,7 @@ abstract final class StyleChapterSampler {
         }
       }
       lastKept = item.number;
+      lastKeptOffset = item.offset;
     }
     return keep;
   }

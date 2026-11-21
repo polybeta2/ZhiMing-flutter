@@ -127,7 +127,7 @@ Schema:
     required String fallbackTitle,
     String? profileId,
   }) {
-    final map = LLMJSONParser.decodeObject(raw, (m) => m);
+    final map = LLMJSONParser.decodeTopLevelObject(raw, (m) => m);
     if (map == null) {
       throw const FormatException('终归并 JSON 解析失败');
     }
@@ -145,7 +145,7 @@ Schema:
     required int upToChapter,
     String? profileId,
   }) {
-    final map = LLMJSONParser.decodeObject(raw, (m) => m);
+    final map = LLMJSONParser.decodeTopLevelObject(raw, (m) => m);
     if (map == null) {
       throw const FormatException('续写深度归并 JSON 解析失败');
     }
@@ -167,26 +167,38 @@ Schema:
     final title = rawTitle.isEmpty ? fallbackTitle : rawTitle;
     final rawAuthor = map['author']?.toString().trim();
 
-    final characters = (map['characters'] as List? ?? const [])
-        .whereType<Map>()
-        .map((e) => CanonCharacter.fromJson(e.cast<String, dynamic>()))
-        .where((c) => c.name.trim().isNotEmpty)
-        .toList();
+    final characters =
+        ((map['characters'] ?? map['chars']) as List? ?? const [])
+            .whereType<Map>()
+            .map((e) => CanonCharacter.fromJson(e.cast<String, dynamic>()))
+            .where((c) => c.name.trim().isNotEmpty)
+            .toList();
 
-    final timeline = (map['timeline'] as List? ?? const [])
-        .whereType<Map>()
-        .map((e) => CanonEvent.fromJson(e.cast<String, dynamic>()))
-        .where((e) => e.summary.trim().isNotEmpty)
-        .toList();
+    final timeline =
+        ((map['timeline'] ?? map['events']) as List? ?? const [])
+            .whereType<Map>()
+            .map((e) => CanonEvent.fromJson(e.cast<String, dynamic>()))
+            .where((e) => e.summary.trim().isNotEmpty)
+            .toList();
 
-    final worldbuilding = (map['worldbuilding'] as List? ?? const [])
-        .whereType<Map>()
-        .map((e) => CanonWorldEntry.fromJson(e.cast<String, dynamic>()))
-        .where((w) => w.name.trim().isNotEmpty || w.content.trim().isNotEmpty)
-        .toList();
+    final worldbuilding =
+        ((map['worldbuilding'] ??
+                    map['world_building'] ??
+                    map['worldBuilding'] ??
+                    map['world'])
+                as List? ??
+            const [])
+            .whereType<Map>()
+            .map((e) => CanonWorldEntry.fromJson(e.cast<String, dynamic>()))
+            .where((w) => w.name.trim().isNotEmpty || w.content.trim().isNotEmpty)
+            .toList();
 
     final openThreads =
-        ((map['openThreads'] ?? map['open_threads']) as List? ?? const [])
+        ((map['openThreads'] ??
+                    map['open_threads'] ??
+                    map['foreshadowings'])
+                as List? ??
+            const [])
             .whereType<Map>()
             .map((e) => CanonThread.fromJson(e.cast<String, dynamic>()))
             .where((t) => t.title.trim().isNotEmpty || t.detail.trim().isNotEmpty)
@@ -197,6 +209,10 @@ Schema:
         .map((e) => e.toString().trim())
         .where((e) => e.isNotEmpty)
         .toList();
+
+    if (characters.isEmpty && timeline.isEmpty && worldbuilding.isEmpty) {
+      throw const FormatException('档案缺少有效的人物、时间线或世界观条目（模型输出可能为空或被截断）');
+    }
 
     return SourceNovelProfileData(
       id: profileId,

@@ -188,7 +188,7 @@ class _SourceLibraryPageState extends ConsumerState<SourceLibraryPage> {
         .createContinuationNovel(profile: profile);
     if (!mounted) return;
     showZmSnackBar(context, '已创建续写作品《${profile.title}》续写');
-    context.go('/novel/$novelId');
+    context.push('/novel/$novelId');
   }
 
   Future<void> _resumeScanTask(ScanTask task) async {
@@ -461,7 +461,7 @@ class _SourceLibraryPageState extends ConsumerState<SourceLibraryPage> {
                                         styleProfileId: p.styleProfileId,
                                       );
                                   if (context.mounted) {
-                                    context.go('/novel/$nid');
+                                    context.push('/novel/$nid');
                                   }
                                 },
                                 child: const Text('同人立项'),

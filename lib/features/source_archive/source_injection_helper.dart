@@ -205,28 +205,41 @@ class SourceAndStyleBridge {
 
       var nextVolOrder = 1;
       final rawSource = sourceText;
+      final origVolumeOutline = _buildOriginalVolumeOutline(profile);
+      final chapterAnchors = _buildChapterOutlineAnchors(profile, upTo);
+
       if (upTo != null && rawSource != null && rawSource.isNotEmpty) {
+        final chapters = StyleChapterSampler.split(rawSource).take(upTo).toList();
+        final actualOrigCount = chapters.length;
         final origVolId = uuid.v4();
         await db.upsertVolume(
           VolumesCompanion.insert(
             id: origVolId,
             novelId: novelId,
-            name: '原作（$upTo 章）',
+            name: '原作（$actualOrigCount 章）',
+            outline: Value(origVolumeOutline.isEmpty ? null : origVolumeOutline),
             sortOrder: nextVolOrder++,
           ),
         );
-        final chapters = StyleChapterSampler.split(rawSource).take(upTo);
         var order = 1;
         for (final ch in chapters) {
           final chTitle = ch.marker.trim().isNotEmpty
               ? ch.marker.trim()
               : '第$order章';
           final cleanBody = NovelTextCleaner.cleanChapterBody(ch.body);
+          final anchorLines = <String>[
+            ...?chapterAnchors[order],
+            if (order == actualOrigCount && profile.activeArcs.isNotEmpty)
+              '【断更处正在推进的主线】\n${profile.activeArcs.map((a) => '- $a').join('\n')}',
+          ];
           await db.upsertChapter(
             ChaptersCompanion.insert(
               id: uuid.v4(),
               volumeId: origVolId,
               title: chTitle,
+              detailedOutline: Value(
+                anchorLines.isEmpty ? null : anchorLines.join('\n\n'),
+              ),
               content: Value(cleanBody),
               wordCount: Value(cleanBody.length),
               isOriginal: const Value(true),
@@ -237,11 +250,15 @@ class SourceAndStyleBridge {
         }
       }
 
+      final nextVolOutline = profile.activeArcs.isEmpty
+          ? null
+          : '【续写衔接起点】承接原作末尾，当前待推进主线：\n${profile.activeArcs.map((a) => '- $a').join('\n')}';
       await db.upsertVolume(
         VolumesCompanion.insert(
           id: uuid.v4(),
           novelId: novelId,
           name: '第一卷',
+          outline: Value(nextVolOutline),
           sortOrder: nextVolOrder,
         ),
       );
@@ -250,8 +267,17 @@ class SourceAndStyleBridge {
         final c = profile.characters[i];
         final bg = [
           if (c.oneLine != null && c.oneLine!.isNotEmpty) c.oneLine!,
-          if (c.abilities != null && c.abilities!.isNotEmpty) c.abilities!,
+          if (c.abilities != null && c.abilities!.isNotEmpty)
+            '能力：${c.abilities!}',
+          if (c.relationships.isNotEmpty)
+            '关系：${c.relationships.take(4).map((r) => '${r.target}(${r.relation})').join('、')}',
         ].join('；');
+        final personality = [
+          if (c.personality != null && c.personality!.isNotEmpty)
+            c.personality!,
+          if (c.voiceSamples.isNotEmpty)
+            '口癖示例：${c.voiceSamples.take(2).map((s) => '「$s」').join(' ')}',
+        ].join('\n');
         await db.upsertCharacter(
           CharactersCompanion.insert(
             id: uuid.v4(),
@@ -259,9 +285,10 @@ class SourceAndStyleBridge {
             name: c.name,
             aliasesJson: Value(jsonEncode(c.aliases)),
             appearance: Value(c.appearance ?? ''),
-            personality: Value(c.personality ?? ''),
+            personality: Value(personality),
             background: Value(bg),
             physicalState: Value(c.currentState ?? ''),
+            isSceneRelevant: Value(i < 12),
             sortOrder: Value(i),
           ),
         );
@@ -269,6 +296,7 @@ class SourceAndStyleBridge {
 
       for (var i = 0; i < profile.worldbuilding.length; i++) {
         final w = profile.worldbuilding[i];
+        final keywords = _extractWorldKeywords(w.name);
         await db.upsertWorldEntry(
           WorldEntriesCompanion.insert(
             id: uuid.v4(),
@@ -276,6 +304,8 @@ class SourceAndStyleBridge {
             category: mappedWorldCategory(w.category),
             name: w.name,
             content: Value(w.content),
+            keywordsJson: Value(jsonEncode(keywords)),
+            isAlwaysOn: const Value(false),
             sortOrder: Value(i),
           ),
         );
@@ -324,6 +354,61 @@ class SourceAndStyleBridge {
       return '物品';
     }
     return '其他';
+  }
+
+  static String _buildOriginalVolumeOutline(SourceNovelProfileData profile) {
+    final sections = <String>[];
+    if (profile.timeline.isNotEmpty) {
+      final lines = profile.timeline.map((ev) {
+        final prefix = [
+          if ((ev.phase ?? '').trim().isNotEmpty) ev.phase!.trim(),
+          if ((ev.chapterRange ?? '').trim().isNotEmpty)
+            ev.chapterRange!.trim(),
+        ].join(' · ');
+        return prefix.isEmpty ? '- ${ev.summary}' : '- [$prefix] ${ev.summary}';
+      });
+      sections.add('【原作剧情阶段时间线】\n${lines.join('\n')}');
+    }
+    if (profile.activeArcs.isNotEmpty) {
+      sections.add(
+        '【断更处进行中主线】\n${profile.activeArcs.map((a) => '- $a').join('\n')}',
+      );
+    }
+    return sections.join('\n\n');
+  }
+
+  static Map<int, List<String>> _buildChapterOutlineAnchors(
+    SourceNovelProfileData profile,
+    int? upTo,
+  ) {
+    final map = <int, List<String>>{};
+    if (upTo == null || upTo <= 0) return map;
+    final numRe = RegExp(r'\d+');
+    for (final ev in profile.timeline) {
+      final range = ev.chapterRange ?? '';
+      final m = numRe.firstMatch(range);
+      if (m == null) continue;
+      final chNo = int.tryParse(m.group(0)!);
+      if (chNo == null || chNo < 1 || chNo > upTo) continue;
+      final label = [
+        if ((ev.phase ?? '').trim().isNotEmpty) ev.phase!.trim(),
+        if (range.trim().isNotEmpty) range.trim(),
+      ].join(' · ');
+      final line = label.isEmpty ? ev.summary : '【$label】${ev.summary}';
+      map.putIfAbsent(chNo, () => []).add(line);
+    }
+    return map;
+  }
+
+  static List<String> _extractWorldKeywords(String name) {
+    final clean = name.trim();
+    if (clean.isEmpty) return const [];
+    final tokens = <String>{clean};
+    for (final part in clean.split(RegExp(r'[·・/／\s()（）\[\]【】「」《》:：\-—]+'))) {
+      final t = part.trim();
+      if (t.length >= 2) tokens.add(t);
+    }
+    return tokens.take(6).toList();
   }
 }
 

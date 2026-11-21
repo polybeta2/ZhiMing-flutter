@@ -168,7 +168,7 @@ class _SourceProfileDetailDialogState
         .createFanficNovel(profile: _profile, styleProfileId: chosenStyleId);
     if (!mounted) return;
     Navigator.of(context).pop();
-    context.go('/novel/$novelId');
+    context.push('/novel/$novelId');
   }
 
   Future<void> _createContinuation() async {
@@ -186,7 +186,7 @@ class _SourceProfileDetailDialogState
         .createContinuationNovel(profile: _profile);
     if (!mounted) return;
     Navigator.of(context).pop();
-    context.go('/novel/$novelId');
+    context.push('/novel/$novelId');
   }
 
   Future<void> _deleteProfile() async {

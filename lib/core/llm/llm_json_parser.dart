@@ -46,6 +46,132 @@ abstract final class LLMJSONParser {
     });
   }
 
+  /// 专用于大型结构化顶层对象（如原作档案）：
+  /// 优先按首个顶层 `{` 解析；若因 maxTokens 被截断未闭合，自动修复截断尾部并闭合括号，
+  /// 绝不退化去抓取内层子对象（防止把单条伏笔/角色当成整书档案）。
+  static T? decodeTopLevelObject<T>(
+    String text,
+    T Function(Map<String, dynamic> json) fromJson,
+  ) {
+    final candidate = _stripFence(text);
+    final start = candidate.indexOf('{');
+    if (start == -1) return null;
+
+    final end = _balancedEnd(candidate, start);
+    if (end != -1) {
+      final slice = candidate.substring(start, end + 1);
+      final cleaned = slice
+          .replaceAll(_trailingArrayComma, ']')
+          .replaceAll(_trailingObjectComma, '}');
+      for (final variant in [slice, cleaned]) {
+        try {
+          final parsed = jsonDecode(variant);
+          if (parsed is Map<String, dynamic>) return fromJson(parsed);
+        } catch (_) {}
+      }
+    }
+
+    // 顶层未闭合（多见于推理模型撞上 maxTokens 截断）：尝试无损抢救已生成的完整字段
+    final repaired = repairTruncatedJsonObject(candidate.substring(start));
+    if (repaired != null) {
+      try {
+        final parsed = jsonDecode(repaired);
+        if (parsed is Map<String, dynamic>) return fromJson(parsed);
+      } catch (_) {}
+    }
+    return null;
+  }
+
+  /// 修复被 maxTokens 中途截断的顶层 JSON 对象，保留已完整生成的数组元素与字段。
+  static String? repairTruncatedJsonObject(String raw) {
+    final start = raw.indexOf('{');
+    if (start == -1) return null;
+    final src = raw.substring(start).trimRight();
+    if (src.isEmpty) return null;
+
+    // 收集所有处于字符串之外的潜在安全截断点（逗号 / 闭合括号后）
+    final cutPoints = <int>[src.length];
+    var inStr = false;
+    var esc = false;
+    for (var i = 0; i < src.length; i++) {
+      final c = src.codeUnitAt(i);
+      if (esc) {
+        esc = false;
+      } else if (inStr && c == 0x5C) {
+        esc = true;
+      } else if (c == 0x22) {
+        inStr = !inStr;
+      } else if (!inStr) {
+        if (c == 0x2C || c == 0x7D || c == 0x5D) {
+          // ',' or '}' or ']'
+          cutPoints.add(c == 0x2C ? i : i + 1);
+        }
+      }
+    }
+
+    // 从最晚的截断点倒序尝试闭合（保留最多已生成内容）
+    final seen = <int>{};
+    var attempts = 0;
+    for (var k = cutPoints.length - 1; k >= 0 && attempts < 80; k--) {
+      final cut = cutPoints[k];
+      if (!seen.add(cut) || cut <= 1) continue;
+      attempts++;
+      final closed = _closeJsonPrefix(src.substring(0, cut));
+      if (closed == null) continue;
+      try {
+        final decoded = jsonDecode(closed);
+        if (decoded is Map<String, dynamic>) return closed;
+      } catch (_) {}
+    }
+    return null;
+  }
+
+  static String? _closeJsonPrefix(String prefix) {
+    var s = prefix.trimRight();
+    if (s.isEmpty) return null;
+
+    final stack = <int>[];
+    var inStr = false;
+    var esc = false;
+    for (var i = 0; i < s.length; i++) {
+      final c = s.codeUnitAt(i);
+      if (esc) {
+        esc = false;
+      } else if (inStr && c == 0x5C) {
+        esc = true;
+      } else if (c == 0x22) {
+        inStr = !inStr;
+      } else if (!inStr) {
+        if (c == 0x7B || c == 0x5B) {
+          stack.add(c);
+        } else if (c == 0x7D && stack.isNotEmpty && stack.last == 0x7B) {
+          stack.removeLast();
+        } else if (c == 0x5D && stack.isNotEmpty && stack.last == 0x5B) {
+          stack.removeLast();
+        }
+      }
+    }
+
+    if (inStr) {
+      if (esc && s.isNotEmpty) {
+        s = s.substring(0, s.length - 1);
+      }
+      s = '$s"';
+    }
+    // 去掉尾部悬挂逗号或未完成键值冒号
+    s = s.replaceFirst(RegExp(r'[,:\s]+$'), '');
+    if (s.isEmpty) return null;
+
+    final buf = StringBuffer(s);
+    for (var i = stack.length - 1; i >= 0; i--) {
+      buf.writeCharCode(stack[i] == 0x7B ? 0x7D : 0x5D);
+    }
+    return buf
+        .toString()
+        .replaceAll(_trailingArrayComma, ']')
+        .replaceAll(_trailingObjectComma, '}');
+  }
+
   /// 解码 JSON 数组并映射
   static List<T>? decodeList<T>(
     String text,

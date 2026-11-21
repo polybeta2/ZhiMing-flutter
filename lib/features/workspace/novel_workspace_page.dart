@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../core/database/app_database.dart';
 import '../../core/database/novel_repository.dart';
@@ -147,6 +148,17 @@ class _NovelWorkspacePageState extends ConsumerState<NovelWorkspacePage> {
 
         return Scaffold(
           appBar: AppBar(
+            leading: IconButton(
+              tooltip: '返回书架',
+              icon: const Icon(Icons.arrow_back_rounded),
+              onPressed: () {
+                if (context.canPop()) {
+                  context.pop();
+                } else {
+                  context.go('/library');
+                }
+              },
+            ),
             title: Row(
               children: [
                 Flexible(
@@ -455,21 +467,82 @@ class _DesktopReferencePane extends ConsumerWidget {
                       padding: const EdgeInsets.all(12),
                       children: [
                         Text(
-                          '细纲',
+                          ch.isOriginal ? '原作章节信息' : '细纲',
                           style: Theme.of(context).textTheme.labelLarge
                               ?.copyWith(fontWeight: FontWeight.w600),
                         ),
                         const SizedBox(height: 6),
-                        Text(
-                          (ch.detailedOutline ?? '').trim().isEmpty
-                              ? '（尚未填写细纲，可前往「大纲伏笔」页补全）'
-                              : ch.detailedOutline!,
-                          style: TextStyle(
-                            fontSize: 13,
-                            height: 1.55,
-                            color: cs.onSurfaceVariant,
+                        if ((ch.detailedOutline ?? '').trim().isNotEmpty)
+                          Text(
+                            ch.detailedOutline!,
+                            style: TextStyle(
+                              fontSize: 13,
+                              height: 1.55,
+                              color: cs.onSurfaceVariant,
+                            ),
+                          )
+                        else if (ch.isOriginal)
+                          StreamBuilder<List<Volume>>(
+                            stream: db.watchVolumes(novelId),
+                            builder: (context, volSnap) {
+                              final vol = (volSnap.data ?? const [])
+                                  .where((v) => v.id == ch.volumeId)
+                                  .firstOrNull;
+                              final volOutline = (vol?.outline ?? '').trim();
+                              return Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Container(
+                                    width: double.infinity,
+                                    padding: const EdgeInsets.all(10),
+                                    decoration: BoxDecoration(
+                                      color: cs.surfaceContainerHighest
+                                          .withValues(alpha: 0.45),
+                                      borderRadius: BorderRadius.circular(8),
+                                    ),
+                                    child: Text(
+                                      '本章为只读原作章，仅用于阅读与续写衔接锚定；请在左侧切换至后续卷（如「第一卷」）撰写新章。',
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        height: 1.45,
+                                        color: cs.onSurfaceVariant,
+                                      ),
+                                    ),
+                                  ),
+                                  if (volOutline.isNotEmpty) ...[
+                                    const SizedBox(height: 12),
+                                    Text(
+                                      '原作剧情脉络总览',
+                                      style: Theme.of(context)
+                                          .textTheme
+                                          .labelLarge
+                                          ?.copyWith(
+                                            fontWeight: FontWeight.w600,
+                                          ),
+                                    ),
+                                    const SizedBox(height: 6),
+                                    Text(
+                                      volOutline,
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        height: 1.55,
+                                        color: cs.onSurfaceVariant,
+                                      ),
+                                    ),
+                                  ],
+                                ],
+                              );
+                            },
+                          )
+                        else
+                          Text(
+                            '（尚未填写细纲，可前往「大纲伏笔」页补全）',
+                            style: TextStyle(
+                              fontSize: 13,
+                              height: 1.55,
+                              color: cs.onSurfaceVariant,
+                            ),
                           ),
-                        ),
                         if (cards.isNotEmpty) ...[
                           const SizedBox(height: 14),
                           Text(
