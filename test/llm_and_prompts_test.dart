@@ -1,7 +1,9 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:zhiming/core/llm/llm_json_parser.dart';
 import 'package:zhiming/core/llm/llm_types.dart';
 import 'package:zhiming/core/llm/openai_sse_client.dart';
+import 'package:zhiming/core/platform/background_keep_alive.dart';
 import 'package:zhiming/core/prompts/prompt_defaults.dart';
 import 'package:zhiming/core/prompts/prompt_library.dart';
 import 'package:zhiming/core/prompts/prompt_limits.dart';
@@ -205,6 +207,55 @@ void main() {
           '模板动作套话',
           '过渡套话',
         ]),
+      );
+    });
+  });
+
+  group('BackgroundKeepAliveService', () {
+    test('ref-counts active sessions, hot-switches modes & persists choice', () async {
+      SharedPreferences.setMockInitialValues({});
+      final calls = <String>[];
+      final service = BackgroundKeepAliveService.forTesting(
+        isIos: true,
+        invoker: (method, [args]) async {
+          calls.add(args == null ? method : '$method:${args['mode']}');
+          if (method == 'requestLocationPermission') {
+            return 'authorizedWhenInUse';
+          }
+          return null;
+        },
+      );
+
+      expect(await service.loadFromPrefs(), BackgroundKeepAliveMode.none);
+      await service.acquire();
+      expect(calls, isEmpty); // none 不触发原生保活
+      await service.release();
+
+      await service.setMode(BackgroundKeepAliveMode.silentAudio);
+      await service.acquire();
+      await service.acquire(); // nested task should not duplicate start
+      expect(calls, ['start:silent_audio']);
+
+      await service.release();
+      expect(service.activeCount, 1);
+      expect(calls, ['start:silent_audio']);
+
+      // 热切换模式到持续位置获取，立即重配置原生保活
+      await service.setMode(BackgroundKeepAliveMode.lowPowerLocation);
+      expect(calls, ['start:silent_audio', 'start:low_power_location']);
+
+      await service.release();
+      expect(service.activeCount, 0);
+      expect(calls.last, 'stop');
+
+      final perm = await service.requestLocationPermission();
+      expect(perm, LocationPermissionState.authorizedWhenInUse);
+
+      // 重建实例应从 SharedPreferences 恢复上次选择
+      final reloaded = BackgroundKeepAliveService.forTesting(isIos: true);
+      expect(
+        await reloaded.loadFromPrefs(),
+        BackgroundKeepAliveMode.lowPowerLocation,
       );
     });
   });

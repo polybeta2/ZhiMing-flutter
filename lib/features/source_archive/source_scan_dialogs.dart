@@ -1,5 +1,6 @@
 import 'package:drift/drift.dart' show Value;
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -7,6 +8,7 @@ import 'package:uuid/uuid.dart';
 
 import '../../core/database/app_database.dart';
 import '../../core/llm/provider_client_factory.dart';
+import '../../core/platform/background_keep_alive.dart';
 import '../../core/security/api_key_vault.dart';
 import '../../core/storage/blob_store.dart';
 import '../../core/theme/design_tokens.dart';
@@ -282,6 +284,22 @@ class _SourceScanProgressDialogState
             if (ctrl != null && isRunning) ...[
               const SizedBox(height: 10),
               StreamingStatusChip(tracker: ctrl.progress),
+              if (defaultTargetPlatform == TargetPlatform.iOS) ...[
+                const SizedBox(height: 6),
+                Builder(
+                  builder: (context) {
+                    final keepAlive = ref.watch(backgroundKeepAliveProvider);
+                    return Text(
+                      keepAlive == BackgroundKeepAliveMode.none
+                          ? 'iOS 后台保活：不保活（切后台可能被系统挂起，可在「设置 → 后台保活」开启）'
+                          : 'iOS 后台保活已启用：${keepAlive.label}',
+                      style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                      ),
+                    );
+                  },
+                ),
+              ],
             ],
             if (ctrl?.errorMessage != null) ...[
               const SizedBox(height: 12),

@@ -9,6 +9,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:zhiming/app.dart';
 import 'package:zhiming/core/database/app_database.dart' hide ScanMeta;
 import 'package:zhiming/core/database/novel_repository.dart';
+import 'package:zhiming/core/platform/background_keep_alive.dart';
 import 'package:zhiming/core/security/api_key_vault.dart';
 import 'package:zhiming/core/storage/blob_store.dart';
 import 'package:zhiming/domain/models/source_profile_models.dart';
@@ -59,6 +60,7 @@ void main() {
 
     setUp(() async {
       SharedPreferences.setMockInitialValues({});
+      BackgroundKeepAliveService.instance.resetForTest();
       tempDir = await Directory.systemTemp.createTemp('zm_ui_test_');
       db = AppDatabase(NativeDatabase.memory());
       blobs = BlobStore(baseDirOverride: tempDir);
@@ -448,10 +450,31 @@ void main() {
         await flushAsyncAndPump(tester);
         expect(find.textContaining('断点僵尸测试书'), findsNothing);
 
-        // 3) T1.5: 设置 -> 开发者工坊展示 25 套提示词
+        // 3) T1.5: 设置 -> 开发者工坊展示 25 套提示词；后台保活三选一（不保活/静音音频/持续位置获取）
         await tester.tap(find.text('设置'));
         await flushAsyncAndPump(tester);
         expect(find.textContaining('model-alpha'), findsOneWidget);
+
+        expect(find.text('后台保活（iOS）'), findsOneWidget);
+        expect(find.textContaining('当前方案：不保活'), findsOneWidget);
+        await tester.tap(find.text('后台保活（iOS）'));
+        await flushAsyncAndPump(tester);
+        expect(find.text('不保活'), findsOneWidget);
+        expect(find.text('静音音频'), findsOneWidget);
+        expect(find.text('持续位置获取'), findsOneWidget);
+        await tester.tap(find.text('静音音频'));
+        await flushAsyncAndPump(tester);
+        await tester.tap(find.text('完成'));
+        await flushAsyncAndPump(tester);
+        expect(find.textContaining('当前方案：静音音频'), findsOneWidget);
+
+        await tester.tap(find.text('后台保活（iOS）'));
+        await flushAsyncAndPump(tester);
+        await tester.tap(find.text('持续位置获取'));
+        await flushAsyncAndPump(tester);
+        await tester.tap(find.text('完成'));
+        await flushAsyncAndPump(tester);
+        expect(find.textContaining('当前方案：持续位置获取'), findsOneWidget);
 
         await tester.tap(find.text('开发者工坊'));
         await flushAsyncAndPump(tester);

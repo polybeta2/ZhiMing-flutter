@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../core/llm/provider_client_factory.dart';
+import '../../core/platform/background_keep_alive.dart';
 import '../../core/prompts/prompt_defaults.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/theme/design_tokens.dart';
@@ -26,10 +27,123 @@ class SettingsPage extends ConsumerWidget {
     }
   }
 
+  Future<void> _openKeepAliveSheet(
+    BuildContext context,
+    WidgetRef ref,
+  ) async {
+    var perm = await BackgroundKeepAliveService.instance
+        .getLocationPermission();
+    if (!context.mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => Consumer(
+        builder: (ctx, dialogRef, _) {
+          final current = dialogRef.watch(backgroundKeepAliveProvider);
+          return StatefulBuilder(
+            builder: (ctx, setLocalState) {
+              return AlertDialog(
+                title: const Text('后台保活（iOS）'),
+                content: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        '用于 iOS 设备在锁屏或切换其他应用期间继续完成原作扫描、自动撰写与文风蒸馏（桌面端无需额外保活）。',
+                        style: Theme.of(ctx).textTheme.bodySmall?.copyWith(
+                          color: Theme.of(ctx).colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      RadioGroup<BackgroundKeepAliveMode>(
+                        groupValue: current,
+                        onChanged: (val) async {
+                          if (val == null) return;
+                          await dialogRef
+                              .read(backgroundKeepAliveProvider.notifier)
+                              .setMode(val);
+                          if (val == BackgroundKeepAliveMode.lowPowerLocation) {
+                            final nextPerm = await BackgroundKeepAliveService
+                                .instance
+                                .requestLocationPermission();
+                            if (ctx.mounted) {
+                              setLocalState(() => perm = nextPerm);
+                            }
+                          }
+                        },
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            for (final m in BackgroundKeepAliveMode.values)
+                              RadioListTile<BackgroundKeepAliveMode>(
+                                value: m,
+                                contentPadding: EdgeInsets.zero,
+                                title: Text(m.label),
+                                subtitle: Text(
+                                  m.description,
+                                  style: Theme.of(ctx).textTheme.bodySmall,
+                                ),
+                              ),
+                          ],
+                        ),
+                      ),
+                      if (current == BackgroundKeepAliveMode.lowPowerLocation &&
+                          perm != LocationPermissionState.unknown) ...[
+                        const SizedBox(height: 8),
+                        Container(
+                          padding: const EdgeInsets.all(10),
+                          decoration: BoxDecoration(
+                            color: perm.isDenied
+                                ? Theme.of(ctx).colorScheme.errorContainer
+                                      .withValues(alpha: 0.45)
+                                : Theme.of(
+                                    ctx,
+                                  ).colorScheme.surfaceContainerHighest,
+                            borderRadius: BorderRadius.circular(
+                              AppTokens.radiusInput,
+                            ),
+                          ),
+                          child: Row(
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  '定位权限：${perm.displayLabel}',
+                                  style: Theme.of(ctx).textTheme.bodySmall,
+                                ),
+                              ),
+                              if (perm.isDenied)
+                                TextButton(
+                                  onPressed: () => BackgroundKeepAliveService
+                                      .instance
+                                      .openAppSettings(),
+                                  child: const Text('去设置'),
+                                ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.of(ctx).pop(),
+                    child: const Text('完成'),
+                  ),
+                ],
+              );
+            },
+          );
+        },
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final defaultProvider = ref.watch(defaultProviderProvider);
     final appearance = ref.watch(appearanceProvider);
+    final keepAliveMode = ref.watch(backgroundKeepAliveProvider);
     final cs = Theme.of(context).colorScheme;
 
     return Scaffold(
@@ -60,6 +174,24 @@ class SettingsPage extends ConsumerWidget {
                         ),
                   trailing: const Icon(Icons.chevron_right),
                   onTap: () => context.push('/settings/providers'),
+                ),
+              ),
+              const SizedBox(height: AppTokens.s5),
+              _SectionTitle('后台运行与保活'),
+              Card(
+                child: ListTile(
+                  leading: const ZmSettingsIcon(
+                    icon: Icons.bolt_rounded,
+                    tint: Colors.teal,
+                  ),
+                  title: const Text('后台保活（iOS）'),
+                  subtitle: Text(
+                    '当前方案：${keepAliveMode.label}（可选不保活 / 静音音频 / 持续位置获取）',
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () => _openKeepAliveSheet(context, ref),
                 ),
               ),
               const SizedBox(height: AppTokens.s5),

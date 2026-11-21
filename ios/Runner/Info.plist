@@ -35,6 +35,15 @@
 	<true/>
 	<key>LSSupportsOpeningDocumentsInPlace</key>
 	<true/>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>audio</string>
+		<string>location</string>
+	</array>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>用于在后台持续扫描长篇原作或生成长文时维持进程活跃，仅启用 3 公里低精度模式，绝不上传或记录您的位置信息。</string>
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>用于在锁屏或切换应用后继续完成原作扫描与 AI 自动撰写，仅作低功耗后台保活使用，不采集也不上传位置数据。</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

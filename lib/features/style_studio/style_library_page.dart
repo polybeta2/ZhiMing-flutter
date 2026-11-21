@@ -13,6 +13,7 @@ import '../../core/database/app_database.dart';
 import '../../core/database/novel_repository.dart';
 import '../../core/llm/provider_client_factory.dart';
 import '../../core/llm/stream_progress.dart';
+import '../../core/platform/background_keep_alive.dart';
 import '../../core/prompts/prompt_library.dart';
 import '../../core/security/api_key_vault.dart';
 import '../../core/theme/design_tokens.dart';
@@ -519,6 +520,7 @@ class _StyleDistillSheetState extends ConsumerState<_StyleDistillSheet> {
     });
     _cancel = CancelToken();
     _progress.begin();
+    await BackgroundKeepAliveService.instance.acquire();
 
     try {
       final client = await createClientForProvider(
@@ -572,6 +574,7 @@ class _StyleDistillSheetState extends ConsumerState<_StyleDistillSheet> {
       if (mounted) setState(() => _error = '$e');
     } finally {
       _progress.finish();
+      await BackgroundKeepAliveService.instance.release();
       if (mounted) setState(() => _running = false);
     }
   }

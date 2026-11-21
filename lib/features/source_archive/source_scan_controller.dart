@@ -11,6 +11,7 @@ import '../../core/database/app_database.dart' hide ScanMeta;
 import '../../core/llm/llm_json_parser.dart';
 import '../../core/llm/llm_types.dart';
 import '../../core/llm/stream_progress.dart';
+import '../../core/platform/background_keep_alive.dart';
 import '../../core/storage/blob_store.dart';
 import '../../domain/models/source_profile_models.dart';
 import '../../domain/source/novel_local_indexer.dart';
@@ -123,6 +124,7 @@ class SourceScanController extends ChangeNotifier {
     try {
       await WakelockPlus.enable();
     } catch (_) {}
+    await BackgroundKeepAliveService.instance.acquire();
 
     try {
       if (mode == ScanMode.evidence) {
@@ -495,6 +497,7 @@ class SourceScanController extends ChangeNotifier {
       try {
         await WakelockPlus.disable();
       } catch (_) {}
+      await BackgroundKeepAliveService.instance.release();
     }
   }
 

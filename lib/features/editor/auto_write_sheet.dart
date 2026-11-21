@@ -11,6 +11,7 @@ import '../../core/database/novel_repository.dart';
 import '../../core/llm/llm_types.dart';
 import '../../core/llm/provider_client_factory.dart';
 import '../../core/llm/stream_progress.dart';
+import '../../core/platform/background_keep_alive.dart';
 import '../../core/prompts/prompt_library.dart';
 import '../../core/prompts/prompt_limits.dart';
 import '../../core/prompts/prompt_templates.dart';
@@ -126,6 +127,7 @@ class _AutoWriteSheetState extends ConsumerState<AutoWriteSheet> {
     });
     _cancel = CancelToken();
     await _enableWakelockSafely();
+    await BackgroundKeepAliveService.instance.acquire();
 
     final lib = ref.read(promptLibraryProvider);
     final config = GenerationConfig(
@@ -355,6 +357,7 @@ class _AutoWriteSheetState extends ConsumerState<AutoWriteSheet> {
     } finally {
       _progress.finish();
       await _disableWakelockSafely();
+      await BackgroundKeepAliveService.instance.release();
       if (mounted) setState(() => _running = false);
     }
   }
