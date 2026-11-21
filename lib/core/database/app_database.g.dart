@@ -3746,6 +3746,33 @@ class $WorldEntriesTable extends WorldEntries
     requiredDuringInsert: false,
     defaultValue: const Constant(''),
   );
+  static const VerificationMeta _keywordsJsonMeta = const VerificationMeta(
+    'keywordsJson',
+  );
+  @override
+  late final GeneratedColumn<String> keywordsJson = GeneratedColumn<String>(
+    'keywords_json',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+    defaultValue: const Constant('[]'),
+  );
+  static const VerificationMeta _isAlwaysOnMeta = const VerificationMeta(
+    'isAlwaysOn',
+  );
+  @override
+  late final GeneratedColumn<bool> isAlwaysOn = GeneratedColumn<bool>(
+    'is_always_on',
+    aliasedName,
+    false,
+    type: DriftSqlType.bool,
+    requiredDuringInsert: false,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'CHECK ("is_always_on" IN (0, 1))',
+    ),
+    defaultValue: const Constant(false),
+  );
   static const VerificationMeta _sortOrderMeta = const VerificationMeta(
     'sortOrder',
   );
@@ -3765,6 +3792,8 @@ class $WorldEntriesTable extends WorldEntries
     category,
     name,
     content,
+    keywordsJson,
+    isAlwaysOn,
     sortOrder,
   ];
   @override
@@ -3814,6 +3843,24 @@ class $WorldEntriesTable extends WorldEntries
         content.isAcceptableOrUnknown(data['content']!, _contentMeta),
       );
     }
+    if (data.containsKey('keywords_json')) {
+      context.handle(
+        _keywordsJsonMeta,
+        keywordsJson.isAcceptableOrUnknown(
+          data['keywords_json']!,
+          _keywordsJsonMeta,
+        ),
+      );
+    }
+    if (data.containsKey('is_always_on')) {
+      context.handle(
+        _isAlwaysOnMeta,
+        isAlwaysOn.isAcceptableOrUnknown(
+          data['is_always_on']!,
+          _isAlwaysOnMeta,
+        ),
+      );
+    }
     if (data.containsKey('sort_order')) {
       context.handle(
         _sortOrderMeta,
@@ -3849,6 +3896,14 @@ class $WorldEntriesTable extends WorldEntries
         DriftSqlType.string,
         data['${effectivePrefix}content'],
       )!,
+      keywordsJson: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}keywords_json'],
+      )!,
+      isAlwaysOn: attachedDatabase.typeMapping.read(
+        DriftSqlType.bool,
+        data['${effectivePrefix}is_always_on'],
+      )!,
       sortOrder: attachedDatabase.typeMapping.read(
         DriftSqlType.int,
         data['${effectivePrefix}sort_order'],
@@ -3868,6 +3923,8 @@ class WorldEntry extends DataClass implements Insertable<WorldEntry> {
   final String category;
   final String name;
   final String content;
+  final String keywordsJson;
+  final bool isAlwaysOn;
   final int sortOrder;
   const WorldEntry({
     required this.id,
@@ -3875,6 +3932,8 @@ class WorldEntry extends DataClass implements Insertable<WorldEntry> {
     required this.category,
     required this.name,
     required this.content,
+    required this.keywordsJson,
+    required this.isAlwaysOn,
     required this.sortOrder,
   });
   @override
@@ -3885,6 +3944,8 @@ class WorldEntry extends DataClass implements Insertable<WorldEntry> {
     map['category'] = Variable<String>(category);
     map['name'] = Variable<String>(name);
     map['content'] = Variable<String>(content);
+    map['keywords_json'] = Variable<String>(keywordsJson);
+    map['is_always_on'] = Variable<bool>(isAlwaysOn);
     map['sort_order'] = Variable<int>(sortOrder);
     return map;
   }
@@ -3896,6 +3957,8 @@ class WorldEntry extends DataClass implements Insertable<WorldEntry> {
       category: Value(category),
       name: Value(name),
       content: Value(content),
+      keywordsJson: Value(keywordsJson),
+      isAlwaysOn: Value(isAlwaysOn),
       sortOrder: Value(sortOrder),
     );
   }
@@ -3911,6 +3974,8 @@ class WorldEntry extends DataClass implements Insertable<WorldEntry> {
       category: serializer.fromJson<String>(json['category']),
       name: serializer.fromJson<String>(json['name']),
       content: serializer.fromJson<String>(json['content']),
+      keywordsJson: serializer.fromJson<String>(json['keywordsJson']),
+      isAlwaysOn: serializer.fromJson<bool>(json['isAlwaysOn']),
       sortOrder: serializer.fromJson<int>(json['sortOrder']),
     );
   }
@@ -3923,6 +3988,8 @@ class WorldEntry extends DataClass implements Insertable<WorldEntry> {
       'category': serializer.toJson<String>(category),
       'name': serializer.toJson<String>(name),
       'content': serializer.toJson<String>(content),
+      'keywordsJson': serializer.toJson<String>(keywordsJson),
+      'isAlwaysOn': serializer.toJson<bool>(isAlwaysOn),
       'sortOrder': serializer.toJson<int>(sortOrder),
     };
   }
@@ -3933,6 +4000,8 @@ class WorldEntry extends DataClass implements Insertable<WorldEntry> {
     String? category,
     String? name,
     String? content,
+    String? keywordsJson,
+    bool? isAlwaysOn,
     int? sortOrder,
   }) => WorldEntry(
     id: id ?? this.id,
@@ -3940,6 +4009,8 @@ class WorldEntry extends DataClass implements Insertable<WorldEntry> {
     category: category ?? this.category,
     name: name ?? this.name,
     content: content ?? this.content,
+    keywordsJson: keywordsJson ?? this.keywordsJson,
+    isAlwaysOn: isAlwaysOn ?? this.isAlwaysOn,
     sortOrder: sortOrder ?? this.sortOrder,
   );
   WorldEntry copyWithCompanion(WorldEntriesCompanion data) {
@@ -3949,6 +4020,12 @@ class WorldEntry extends DataClass implements Insertable<WorldEntry> {
       category: data.category.present ? data.category.value : this.category,
       name: data.name.present ? data.name.value : this.name,
       content: data.content.present ? data.content.value : this.content,
+      keywordsJson: data.keywordsJson.present
+          ? data.keywordsJson.value
+          : this.keywordsJson,
+      isAlwaysOn: data.isAlwaysOn.present
+          ? data.isAlwaysOn.value
+          : this.isAlwaysOn,
       sortOrder: data.sortOrder.present ? data.sortOrder.value : this.sortOrder,
     );
   }
@@ -3961,14 +4038,24 @@ class WorldEntry extends DataClass implements Insertable<WorldEntry> {
           ..write('category: $category, ')
           ..write('name: $name, ')
           ..write('content: $content, ')
+          ..write('keywordsJson: $keywordsJson, ')
+          ..write('isAlwaysOn: $isAlwaysOn, ')
           ..write('sortOrder: $sortOrder')
           ..write(')'))
         .toString();
   }
 
   @override
-  int get hashCode =>
-      Object.hash(id, novelId, category, name, content, sortOrder);
+  int get hashCode => Object.hash(
+    id,
+    novelId,
+    category,
+    name,
+    content,
+    keywordsJson,
+    isAlwaysOn,
+    sortOrder,
+  );
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
@@ -3978,6 +4065,8 @@ class WorldEntry extends DataClass implements Insertable<WorldEntry> {
           other.category == this.category &&
           other.name == this.name &&
           other.content == this.content &&
+          other.keywordsJson == this.keywordsJson &&
+          other.isAlwaysOn == this.isAlwaysOn &&
           other.sortOrder == this.sortOrder);
 }
 
@@ -3987,6 +4076,8 @@ class WorldEntriesCompanion extends UpdateCompanion<WorldEntry> {
   final Value<String> category;
   final Value<String> name;
   final Value<String> content;
+  final Value<String> keywordsJson;
+  final Value<bool> isAlwaysOn;
   final Value<int> sortOrder;
   final Value<int> rowid;
   const WorldEntriesCompanion({
@@ -3995,6 +4086,8 @@ class WorldEntriesCompanion extends UpdateCompanion<WorldEntry> {
     this.category = const Value.absent(),
     this.name = const Value.absent(),
     this.content = const Value.absent(),
+    this.keywordsJson = const Value.absent(),
+    this.isAlwaysOn = const Value.absent(),
     this.sortOrder = const Value.absent(),
     this.rowid = const Value.absent(),
   });
@@ -4004,6 +4097,8 @@ class WorldEntriesCompanion extends UpdateCompanion<WorldEntry> {
     required String category,
     required String name,
     this.content = const Value.absent(),
+    this.keywordsJson = const Value.absent(),
+    this.isAlwaysOn = const Value.absent(),
     this.sortOrder = const Value.absent(),
     this.rowid = const Value.absent(),
   }) : id = Value(id),
@@ -4016,6 +4111,8 @@ class WorldEntriesCompanion extends UpdateCompanion<WorldEntry> {
     Expression<String>? category,
     Expression<String>? name,
     Expression<String>? content,
+    Expression<String>? keywordsJson,
+    Expression<bool>? isAlwaysOn,
     Expression<int>? sortOrder,
     Expression<int>? rowid,
   }) {
@@ -4025,6 +4122,8 @@ class WorldEntriesCompanion extends UpdateCompanion<WorldEntry> {
       if (category != null) 'category': category,
       if (name != null) 'name': name,
       if (content != null) 'content': content,
+      if (keywordsJson != null) 'keywords_json': keywordsJson,
+      if (isAlwaysOn != null) 'is_always_on': isAlwaysOn,
       if (sortOrder != null) 'sort_order': sortOrder,
       if (rowid != null) 'rowid': rowid,
     });
@@ -4036,6 +4135,8 @@ class WorldEntriesCompanion extends UpdateCompanion<WorldEntry> {
     Value<String>? category,
     Value<String>? name,
     Value<String>? content,
+    Value<String>? keywordsJson,
+    Value<bool>? isAlwaysOn,
     Value<int>? sortOrder,
     Value<int>? rowid,
   }) {
@@ -4045,6 +4146,8 @@ class WorldEntriesCompanion extends UpdateCompanion<WorldEntry> {
       category: category ?? this.category,
       name: name ?? this.name,
       content: content ?? this.content,
+      keywordsJson: keywordsJson ?? this.keywordsJson,
+      isAlwaysOn: isAlwaysOn ?? this.isAlwaysOn,
       sortOrder: sortOrder ?? this.sortOrder,
       rowid: rowid ?? this.rowid,
     );
@@ -4068,6 +4171,12 @@ class WorldEntriesCompanion extends UpdateCompanion<WorldEntry> {
     if (content.present) {
       map['content'] = Variable<String>(content.value);
     }
+    if (keywordsJson.present) {
+      map['keywords_json'] = Variable<String>(keywordsJson.value);
+    }
+    if (isAlwaysOn.present) {
+      map['is_always_on'] = Variable<bool>(isAlwaysOn.value);
+    }
     if (sortOrder.present) {
       map['sort_order'] = Variable<int>(sortOrder.value);
     }
@@ -4085,6 +4194,8 @@ class WorldEntriesCompanion extends UpdateCompanion<WorldEntry> {
           ..write('category: $category, ')
           ..write('name: $name, ')
           ..write('content: $content, ')
+          ..write('keywordsJson: $keywordsJson, ')
+          ..write('isAlwaysOn: $isAlwaysOn, ')
           ..write('sortOrder: $sortOrder, ')
           ..write('rowid: $rowid')
           ..write(')'))
@@ -12979,6 +13090,8 @@ typedef $$WorldEntriesTableCreateCompanionBuilder =
       required String category,
       required String name,
       Value<String> content,
+      Value<String> keywordsJson,
+      Value<bool> isAlwaysOn,
       Value<int> sortOrder,
       Value<int> rowid,
     });
@@ -12989,6 +13102,8 @@ typedef $$WorldEntriesTableUpdateCompanionBuilder =
       Value<String> category,
       Value<String> name,
       Value<String> content,
+      Value<String> keywordsJson,
+      Value<bool> isAlwaysOn,
       Value<int> sortOrder,
       Value<int> rowid,
     });
@@ -13041,6 +13156,16 @@ class $$WorldEntriesTableFilterComposer
 
   ColumnFilters<String> get content => $composableBuilder(
     column: $table.content,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get keywordsJson => $composableBuilder(
+    column: $table.keywordsJson,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<bool> get isAlwaysOn => $composableBuilder(
+    column: $table.isAlwaysOn,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -13102,6 +13227,16 @@ class $$WorldEntriesTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<String> get keywordsJson => $composableBuilder(
+    column: $table.keywordsJson,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<bool> get isAlwaysOn => $composableBuilder(
+    column: $table.isAlwaysOn,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   ColumnOrderings<int> get sortOrder => $composableBuilder(
     column: $table.sortOrder,
     builder: (column) => ColumnOrderings(column),
@@ -13151,6 +13286,16 @@ class $$WorldEntriesTableAnnotationComposer
 
   GeneratedColumn<String> get content =>
       $composableBuilder(column: $table.content, builder: (column) => column);
+
+  GeneratedColumn<String> get keywordsJson => $composableBuilder(
+    column: $table.keywordsJson,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<bool> get isAlwaysOn => $composableBuilder(
+    column: $table.isAlwaysOn,
+    builder: (column) => column,
+  );
 
   GeneratedColumn<int> get sortOrder =>
       $composableBuilder(column: $table.sortOrder, builder: (column) => column);
@@ -13212,6 +13357,8 @@ class $$WorldEntriesTableTableManager
                 Value<String> category = const Value.absent(),
                 Value<String> name = const Value.absent(),
                 Value<String> content = const Value.absent(),
+                Value<String> keywordsJson = const Value.absent(),
+                Value<bool> isAlwaysOn = const Value.absent(),
                 Value<int> sortOrder = const Value.absent(),
                 Value<int> rowid = const Value.absent(),
               }) => WorldEntriesCompanion(
@@ -13220,6 +13367,8 @@ class $$WorldEntriesTableTableManager
                 category: category,
                 name: name,
                 content: content,
+                keywordsJson: keywordsJson,
+                isAlwaysOn: isAlwaysOn,
                 sortOrder: sortOrder,
                 rowid: rowid,
               ),
@@ -13230,6 +13379,8 @@ class $$WorldEntriesTableTableManager
                 required String category,
                 required String name,
                 Value<String> content = const Value.absent(),
+                Value<String> keywordsJson = const Value.absent(),
+                Value<bool> isAlwaysOn = const Value.absent(),
                 Value<int> sortOrder = const Value.absent(),
                 Value<int> rowid = const Value.absent(),
               }) => WorldEntriesCompanion.insert(
@@ -13238,6 +13389,8 @@ class $$WorldEntriesTableTableManager
                 category: category,
                 name: name,
                 content: content,
+                keywordsJson: keywordsJson,
+                isAlwaysOn: isAlwaysOn,
                 sortOrder: sortOrder,
                 rowid: rowid,
               ),

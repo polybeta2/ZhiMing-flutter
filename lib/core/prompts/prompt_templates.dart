@@ -76,11 +76,70 @@ abstract final class PromptTemplates {
     required PromptLibraryState library,
     required String content,
     required String title,
+    List<String> existingCharacters = const [],
+    List<String> openForeshadowings = const [],
   }) {
     final system = library.resolvedText(PromptID.summarize);
+    final user = StringBuffer();
+    if (existingCharacters.isNotEmpty) {
+      user.writeln('【已有角色列表（用于姓名对齐，未出场勿填）】');
+      user.writeln(existingCharacters.join('、'));
+      user.writeln();
+    }
+    if (openForeshadowings.isNotEmpty) {
+      user.writeln('【当前未回收伏笔清单（仅当本章明确回收时填入 resolved_foreshadowing_titles）】');
+      for (final f in openForeshadowings.take(25)) {
+        user.writeln('- $f');
+      }
+      user.writeln();
+    }
+    user.write('【$title】\n$content');
     return [
       LLMMessage(role: LLMRole.system, content: system),
-      LLMMessage(role: LLMRole.user, content: '【$title】\n$content'),
+      LLMMessage(role: LLMRole.user, content: user.toString()),
+    ];
+  }
+
+  static List<LLMMessage> factReview({
+    required PromptLibraryState library,
+    required String truthArchive,
+    required String chapterTitle,
+    required String draftContent,
+  }) {
+    var system = library.resolvedText(PromptID.factReview);
+    if (truthArchive.trim().isNotEmpty) {
+      system = '$system\n\n【真相档案】\n${truthArchive.trim()}';
+    }
+    final user = '【待审章节：$chapterTitle】\n$draftContent';
+    return [
+      LLMMessage(role: LLMRole.system, content: system),
+      LLMMessage(role: LLMRole.user, content: user),
+    ];
+  }
+
+  static List<LLMMessage> factReviewFix({
+    required String truthArchive,
+    required String chapterTitle,
+    required String draftContent,
+    required String issuesChecklist,
+  }) {
+    final system = '''你是长篇小说的精准勘误编辑。你会收到【真相档案】、【待修订章节正文】与【待修复事实问题清单】。
+严格遵守：
+1. 只做定点最小化修改来消除【待修复事实问题清单】中的设定/时间线/连续性/人设/逻辑矛盾；
+2. 未涉及矛盾的段落、文风、对话语气、节奏与篇幅必须最大限度原样保留，严禁借机重写整章或改变原有情节走向；
+3. 修复后不得引入新的设定冲突或信息壁垒穿帮；
+4. 只输出修复后的完整章节正文，不要在开头重复章节标题，不要解释、批注或前后对照表。
+
+【真相档案】
+${truthArchive.trim()}''';
+    final user = '''【待修复事实问题清单】
+$issuesChecklist
+
+【待修订章节正文（$chapterTitle）】
+$draftContent''';
+    return [
+      LLMMessage(role: LLMRole.system, content: system),
+      LLMMessage(role: LLMRole.user, content: user),
     ];
   }
 

@@ -107,6 +107,8 @@ class WorldEntries extends Table {
   TextColumn get category => text()();
   TextColumn get name => text()();
   TextColumn get content => text().withDefault(const Constant(''))();
+  TextColumn get keywordsJson => text().withDefault(const Constant('[]'))();
+  BoolColumn get isAlwaysOn => boolean().withDefault(const Constant(false))();
   IntColumn get sortOrder => integer().withDefault(const Constant(0))();
 
   @override

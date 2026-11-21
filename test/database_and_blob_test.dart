@@ -217,6 +217,33 @@ void main() {
       expect(await blobs.exists(BlobKinds.continuation, 'sp1'), isFalse);
       expect(await blobs.exists(BlobKinds.scanTask, 'sp1'), isFalse);
     });
+
+    test('WorldEntries v2 persists keywordsJson and isAlwaysOn', () async {
+      final now = DateTime.now();
+      await db.upsertNovel(
+        NovelsCompanion.insert(
+          id: 'n_lore',
+          title: '设定测试',
+          createdAt: now,
+          updatedAt: now,
+        ),
+      );
+      await db.upsertWorldEntry(
+        WorldEntriesCompanion.insert(
+          id: 'w_kw',
+          novelId: 'n_lore',
+          category: '规则',
+          name: '黑雾法则',
+          content: const Value('入夜后不得直视黑雾中的灯火'),
+          keywordsJson: const Value('["黑雾","灯火","入夜"]'),
+          isAlwaysOn: const Value(true),
+        ),
+      );
+      final entries = await db.getWorldEntries('n_lore');
+      expect(entries.length, 1);
+      expect(entries.first.keywordsJson, '["黑雾","灯火","入夜"]');
+      expect(entries.first.isAlwaysOn, isTrue);
+    });
   });
 
   group('BlobStore tail reader', () {

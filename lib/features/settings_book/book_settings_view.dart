@@ -545,8 +545,12 @@ class _WorldListPaneState extends ConsumerState<_WorldListPane> {
 
   Future<void> _editEntry([WorldEntry? existing]) async {
     final nameCtrl = TextEditingController(text: existing?.name ?? '');
+    final keywordsCtrl = TextEditingController(
+      text: decodeStringList(existing?.keywordsJson).join('、'),
+    );
     final contentCtrl = TextEditingController(text: existing?.content ?? '');
     var category = existing?.category ?? WorldCategories.all.first;
+    var isAlwaysOn = existing?.isAlwaysOn ?? false;
 
     final saved = await showDialog<bool>(
       context: context,
@@ -555,37 +559,59 @@ class _WorldListPaneState extends ConsumerState<_WorldListPane> {
           title: Text(existing == null ? '新增世界观条目' : '编辑世界观条目'),
           content: SizedBox(
             width: 500,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                DropdownButtonFormField<String>(
-                  initialValue: WorldCategories.all.contains(category)
-                      ? category
-                      : '其他',
-                  decoration: const InputDecoration(labelText: '分类'),
-                  items: [
-                    for (final c in WorldCategories.all)
-                      DropdownMenuItem(value: c, child: Text(c)),
-                  ],
-                  onChanged: (v) =>
-                      setModal(() => category = v ?? WorldCategories.all.first),
-                ),
-                const SizedBox(height: 10),
-                TextField(
-                  controller: nameCtrl,
-                  decoration: const InputDecoration(labelText: '条目名称 *'),
-                ),
-                const SizedBox(height: 10),
-                TextField(
-                  controller: contentCtrl,
-                  minLines: 4,
-                  maxLines: 8,
-                  decoration: const InputDecoration(
-                    labelText: '设定说明',
-                    alignLabelWithHint: true,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  DropdownButtonFormField<String>(
+                    initialValue: WorldCategories.all.contains(category)
+                        ? category
+                        : '其他',
+                    decoration: const InputDecoration(labelText: '分类'),
+                    items: [
+                      for (final c in WorldCategories.all)
+                        DropdownMenuItem(value: c, child: Text(c)),
+                    ],
+                    onChanged: (v) => setModal(
+                      () => category = v ?? WorldCategories.all.first,
+                    ),
                   ),
-                ),
-              ],
+                  const SizedBox(height: 10),
+                  TextField(
+                    controller: nameCtrl,
+                    decoration: const InputDecoration(labelText: '条目名称 *'),
+                  ),
+                  const SizedBox(height: 10),
+                  TextField(
+                    controller: keywordsCtrl,
+                    decoration: const InputDecoration(
+                      labelText: '触发关键词（顿号或逗号分隔，命中即自动注入）',
+                      hintText: '例如：诡异副本、收容物、禁区',
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  TextField(
+                    controller: contentCtrl,
+                    minLines: 4,
+                    maxLines: 8,
+                    decoration: const InputDecoration(
+                      labelText: '设定说明',
+                      alignLabelWithHint: true,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('常驻注入（每章续写自动携带）'),
+                    subtitle: const Text(
+                      '关闭时仅在细纲/上下文提及条目名或关键词时按需激活',
+                      style: TextStyle(fontSize: 12),
+                    ),
+                    value: isAlwaysOn,
+                    onChanged: (v) => setModal(() => isAlwaysOn = v),
+                  ),
+                ],
+              ),
             ),
           ),
           actions: [
@@ -603,6 +629,10 @@ class _WorldListPaneState extends ConsumerState<_WorldListPane> {
     );
 
     if (saved == true && nameCtrl.text.trim().isNotEmpty) {
+      final keywords = keywordsCtrl.text
+          .split(RegExp(r'[,，、;；\s]+'))
+          .where((s) => s.trim().isNotEmpty)
+          .toList();
       await ref
           .read(appDatabaseProvider)
           .upsertWorldEntry(
@@ -612,6 +642,8 @@ class _WorldListPaneState extends ConsumerState<_WorldListPane> {
               category: category,
               name: nameCtrl.text.trim(),
               content: Value(contentCtrl.text.trim()),
+              keywordsJson: Value(encodeStringList(keywords)),
+              isAlwaysOn: Value(isAlwaysOn),
               sortOrder: Value(existing?.sortOrder ?? 0),
             ),
           );
@@ -619,6 +651,7 @@ class _WorldListPaneState extends ConsumerState<_WorldListPane> {
     }
 
     nameCtrl.dispose();
+    keywordsCtrl.dispose();
     contentCtrl.dispose();
   }
 
@@ -686,6 +719,7 @@ class _WorldListPaneState extends ConsumerState<_WorldListPane> {
                           const SizedBox(height: AppTokens.s3),
                       itemBuilder: (_, i) {
                         final w = list[i];
+                        final keywords = decodeStringList(w.keywordsJson);
                         return Card(
                           child: ListTile(
                             title: Row(
@@ -706,14 +740,43 @@ class _WorldListPaneState extends ConsumerState<_WorldListPane> {
                                     ),
                                   ),
                                 ),
+                                if (w.isAlwaysOn)
+                                  const Chip(
+                                    label: Text(
+                                      '常驻',
+                                      style: TextStyle(fontSize: 11),
+                                    ),
+                                    visualDensity: VisualDensity.compact,
+                                  ),
                               ],
                             ),
                             subtitle: Padding(
                               padding: const EdgeInsets.only(top: 6),
-                              child: Text(
-                                w.content,
-                                maxLines: 3,
-                                overflow: TextOverflow.ellipsis,
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    w.content,
+                                    maxLines: 3,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                  if (keywords.isNotEmpty) ...[
+                                    const SizedBox(height: 4),
+                                    Text(
+                                      '触发词：${keywords.join('、')}',
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: Theme.of(context)
+                                          .textTheme
+                                          .bodySmall
+                                          ?.copyWith(
+                                            color: Theme.of(
+                                              context,
+                                            ).colorScheme.primary,
+                                          ),
+                                    ),
+                                  ],
+                                ],
                               ),
                             ),
                             trailing: IconButton(

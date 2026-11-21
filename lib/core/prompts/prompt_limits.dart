@@ -19,12 +19,13 @@ abstract final class PromptLimits {
   static const int styleEvidenceCap = 80;
 }
 
-/// 24 套稳定内置提示词 ID 常量
+/// 25 套稳定内置提示词 ID 常量
 abstract final class PromptID {
   static const String continueWriting = 'prompt.continue.system';
   static const String writing = 'prompt.writing.system';
   static const String rewrite = 'prompt.rewrite.system';
   static const String summarize = 'prompt.summarize.system';
+  static const String factReview = 'prompt.fact.review.system';
   static const String creationClarify = 'prompt.creation.clarify.system';
   static const String creationStructure = 'prompt.creation.structure.system';
   static const String creationFoundation = 'prompt.creation.foundation.system';

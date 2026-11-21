@@ -29,9 +29,32 @@ abstract final class ProseChecker {
     '刹那间',
     '霎时间',
     '瞬间，',
+    '总而言之',
+    '值得一提的是',
+  ];
+
+  static const List<String> _abstractSlopPhrases = [
+    '某种难以言喻',
+    '难以言喻的',
+    '一丝不易察觉',
+    '不易察觉的',
+    '空气仿佛凝固',
+    '空气瞬间凝固',
+  ];
+
+  static const List<String> _tidyEndingPhrases = [
+    '命运的齿轮',
+    '真正的考验',
+    '一切才刚刚开始',
+    '才刚刚开始',
+    '属于他的传奇',
+    '属于她的传奇',
   ];
 
   static final RegExp _duijuRe = RegExp(r'不是[^。！？\n]{1,16}[，,]?而是');
+  static final RegExp _progressiveSlopRe = RegExp(
+    r'(不仅|不只|不仅仅)[^。！？\n]{1,18}[，,]?(而且|更是|还是)',
+  );
   static final RegExp _simileRe = RegExp(r'仿佛|犹如|宛如|好似');
   static final RegExp _causationRe = RegExp(
     r'[让令使][人他她它][^。！？\n]{0,6}(感到|不禁|生出|产生)',
@@ -56,6 +79,42 @@ abstract final class ProseChecker {
         ProseIssue(
           rule: '解释性对举句',
           detail: '命中 $duiju 处「不是…而是…」式说明腔，建议改由画面直接呈现',
+        ),
+      );
+    }
+
+    final progressive = _progressiveSlopRe.allMatches(text).length;
+    if (progressive > 0) {
+      issues.add(
+        ProseIssue(
+          rule: '递进说明腔',
+          detail: '命中 $progressive 处「不仅…而且… / 这不仅仅是…更是…」论文式递进句，建议拆成动作或对白',
+        ),
+      );
+    }
+
+    final abstractHits = [
+      for (final p in _abstractSlopPhrases)
+        if (text.contains(p)) p,
+    ];
+    if (abstractHits.isNotEmpty) {
+      issues.add(
+        ProseIssue(
+          rule: '空洞抽象修饰',
+          detail: '命中「${abstractHits.take(3).join('、')}」，请改写为具体感官或微动作',
+        ),
+      );
+    }
+
+    final tidyHits = [
+      for (final p in _tidyEndingPhrases)
+        if (text.contains(p)) p,
+    ];
+    if (tidyHits.isNotEmpty) {
+      issues.add(
+        ProseIssue(
+          rule: '强行升华套话',
+          detail: '命中「${tidyHits.take(3).join('、')}」，避免章末或段末强行上价值',
         ),
       );
     }

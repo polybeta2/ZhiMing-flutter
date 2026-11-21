@@ -75,13 +75,17 @@ void main() {
   });
 
   group('PromptLibrary & PromptLimits & PromptTemplates', () {
-    test('locks all critical guardrail constants & 24 built-in prompts', () {
+    test('locks all critical guardrail constants & 25 built-in prompts', () {
       expect(PromptLimits.maxOverrideChars, 20000);
       expect(PromptLimits.matchedSupplementCap, 8000);
       expect(PromptLimits.r18ModuleCharBudget, 12000);
       expect(PromptLimits.requiredFieldCap, 4000);
       expect(PromptLimits.requestWarnChars, 80000);
-      expect(PromptDefaults.builtInPrompts.length, 24);
+      expect(PromptDefaults.builtInPrompts.length, 25);
+      expect(
+        PromptDefaults.builtInPrompts.any((p) => p.id == PromptID.factReview),
+        isTrue,
+      );
       expect(
         PromptDefaults.defaultTagCategories.expand((c) => c.tags).length,
         15,
@@ -179,15 +183,29 @@ void main() {
   });
 
   group('ProseChecker', () {
-    test('detects duiju, cliches, simile abuse, and high le-density', () {
+    test('detects duiju, progressive slop, abstract slop, tidy endings, cliches, simile abuse', () {
       final sample =
-          '他不是为了复仇，而是为了寻找真相。他瞳孔骤缩，倒吸一口凉气，'
+          '他不是为了复仇，而是为了寻找真相。这不仅仅是一次试探，更是一场博弈。'
+          '空气仿佛凝固了，一种某种难以言喻的压力笼罩下来。他瞳孔骤缩，倒吸一口凉气，'
           '仿佛置身冰窖，犹如坠入深渊，宛如石化一般。与此同时，刹那间，霎时间，'
           '这让他感到一阵寒意，他意识到自己错了，心中一凛。'
-          '他走了过去，拿了杯子，喝了水，关了灯，锁了门，躺了下来。';
+          '他走了过去，拿了杯子，喝了水，关了灯，锁了门，躺了下来。命运的齿轮开始转动，真正的考验才刚刚开始。';
       final issues = ProseChecker.check(sample);
       final rules = issues.map((e) => e.rule).toSet();
-      expect(rules, containsAll(['解释性对举句', '比喻滥用', '强加因果', '认知直陈', '模板动作套话', '过渡套话']));
+      expect(
+        rules,
+        containsAll([
+          '解释性对举句',
+          '递进说明腔',
+          '空洞抽象修饰',
+          '强行升华套话',
+          '比喻滥用',
+          '强加因果',
+          '认知直陈',
+          '模板动作套话',
+          '过渡套话',
+        ]),
+      );
     });
   });
 }

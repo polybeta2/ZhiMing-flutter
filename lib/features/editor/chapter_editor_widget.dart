@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:dio/dio.dart';
 import 'package:drift/drift.dart' show Value;
@@ -10,7 +11,6 @@ import 'package:wakelock_plus/wakelock_plus.dart';
 
 import '../../core/database/app_database.dart';
 import '../../core/database/novel_repository.dart';
-import '../../core/llm/llm_json_parser.dart';
 import '../../core/llm/llm_types.dart';
 import '../../core/llm/provider_client_factory.dart';
 import '../../core/llm/stream_progress.dart';
@@ -25,9 +25,12 @@ import '../../core/widgets/diff_preview_dialog.dart';
 import '../../core/widgets/streaming_status_chip.dart';
 import '../../core/widgets/zm_widgets.dart';
 import '../../domain/models/novel_domain.dart';
+import '../../domain/writing/chapter_ledger.dart';
 import '../../domain/writing/context_builder.dart';
+import '../../domain/writing/fact_review_service.dart';
 import '../../domain/writing/prose_checker.dart';
 import '../app_settings/model_selector_sheet.dart';
+import 'fact_review_sheet.dart';
 
 /// 会话级文风选择三态（仅当前编辑会话生效，不落库）
 sealed class SessionStyleMode {
@@ -797,14 +800,23 @@ class _ChapterEditorWidgetState extends ConsumerState<ChapterEditorWidget> {
       showZmSnackBar(context, '本章还没有正文，先写点内容再建档', isError: true);
       return;
     }
+    final db = ref.read(appDatabaseProvider);
+    final existingChars = await db.getCharacters(widget.novelId);
+    final openFs = (await db.getForeshadowings(
+      widget.novelId,
+    )).where((f) => f.status == 'open').map((f) => f.title).toList();
+
     final msgs = PromptTemplates.applyingExtra(
       provider.systemPromptExtra,
       PromptTemplates.summarize(
         library: ref.read(promptLibraryProvider),
         content: content,
         title: _chapter!.title,
+        existingCharacters: existingChars.map((c) => c.name).toList(),
+        openForeshadowings: openFs,
       ),
     );
+    if (!mounted) return;
     if (!await PromptGuard.authorize(
       context,
       totalChars: msgs.totalContentChars,
@@ -825,32 +837,64 @@ class _ChapterEditorWidgetState extends ConsumerState<ChapterEditorWidget> {
         msgs,
         config: GenerationConfig(
           temperature: 0.2,
-          maxTokens: provider.maxTokens,
+          maxTokens: math.max(provider.maxTokens, 12288),
         ),
         cancelToken: _summaryCancel,
       )) {
         _summaryProgress.handle(ev);
         if (ev is ContentDelta) raw.write(ev.text);
       }
-      final parsed = SummaryResult.tryParse(raw.toString());
-      if (parsed == null) {
+      final extraction = ChapterLedgerExtraction.tryParse(raw.toString());
+      if (extraction == null) {
         if (mounted) {
           showZmSnackBar(context, '摘要 JSON 解析失败，请重试或手动编辑', isError: true);
         }
         return;
       }
-      await ref
-          .read(novelRepositoryProvider)
-          .applySummaryResult(
-            novelId: widget.novelId,
-            chapter: _chapter!,
-            result: parsed,
-          );
-      if (mounted) {
-        showZmSnackBar(
-          context,
-          '建档完成（${parsed.keyFacts.length} 条关键事实，${parsed.newForeshadowings.length} 条新伏笔）',
+
+      if (!mounted) return;
+      final repo = ref.read(novelRepositoryProvider);
+      if (extraction.hasWriteBackCandidates) {
+        final decision = await showDialog<_LedgerConfirmDecision>(
+          context: context,
+          builder: (_) => _LedgerConfirmDialog(
+            chapterTitle: _chapter!.title,
+            extraction: extraction,
+          ),
         );
+        if (decision == null || !mounted) return;
+        final report = await ChapterLedgerApplier.applyToDb(
+          db: db,
+          repo: repo,
+          novelId: widget.novelId,
+          chapter: _chapter!,
+          extraction: extraction,
+          selectedDeltaIndices: decision.deltaIndices,
+          selectedNewCharacterIndices: decision.newCharacterIndices,
+          selectedNewWorldIndices: decision.newWorldIndices,
+          selectedNewForeshadowIndices: decision.newForeshadowIndices,
+          selectedResolvedForeshadowIndices: decision.resolvedForeshadowIndices,
+        );
+        if (mounted) {
+          showZmSnackBar(
+            context,
+            '建档完成（${extraction.summaryResult.keyFacts.length} 条事实 · ${report.formatSummary()}）',
+          );
+        }
+      } else {
+        await ChapterLedgerApplier.applyToDb(
+          db: db,
+          repo: repo,
+          novelId: widget.novelId,
+          chapter: _chapter!,
+          extraction: extraction,
+        );
+        if (mounted) {
+          showZmSnackBar(
+            context,
+            '建档完成（${extraction.summaryResult.keyFacts.length} 条关键事实）',
+          );
+        }
       }
     } catch (e) {
       if (mounted) showZmSnackBar(context, '建档失败：$e', isError: true);
@@ -858,6 +902,65 @@ class _ChapterEditorWidgetState extends ConsumerState<ChapterEditorWidget> {
       _summaryProgress.finish();
       if (mounted) setState(() => _summarizing = false);
     }
+  }
+
+  // ---- 5 维事实审稿 ----
+
+  Future<void> _openFactReview() async {
+    final provider = _activeProvider;
+    final ch = _chapter;
+    if (ch == null) return;
+    if (_textCtrl.text.trim().length < 60) {
+      showZmSnackBar(context, '事实审稿至少需要 60 字正文', isError: true);
+      return;
+    }
+    if (provider == null) {
+      showZmSnackBar(context, '请先配置模型提供商', isError: true);
+      return;
+    }
+    await _saveNow();
+    final repo = ref.read(novelRepositoryProvider);
+    final bundle = await repo.loadBundle(widget.novelId);
+    if (bundle == null || !mounted) return;
+    final chBundle = bundle.allChaptersInOrder
+        .where((c) => c.chapter.id == ch.id)
+        .firstOrNull;
+    if (chBundle == null) return;
+
+    final sourceWindow = await widget.resolveSourceWindow?.call(
+      bundle,
+      chBundle,
+    );
+    final truthArchive = FactReviewService.buildTruthArchive(
+      chapter: chBundle,
+      bundle: bundle,
+      draftContent: _textCtrl.text,
+      sourceWindow: sourceWindow,
+    );
+    if (!mounted) return;
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      builder: (_) => FactReviewSheet(
+        draft: _textCtrl.text,
+        chapterTitle: ch.title,
+        truthArchive: truthArchive,
+        provider: provider,
+        onApply: (fixedText) async {
+          await repo.takeSnapshot(
+            chapterId: ch.id,
+            content: _textCtrl.text,
+            triggerType: 'factReview',
+          );
+          _textCtrl.text = fixedText;
+          await _saveNow();
+          if (mounted) {
+            showZmSnackBar(context, '已建快照并应用事实勘误修改');
+          }
+        },
+      ),
+    );
   }
 
   // ---- 版本快照 ----
@@ -1426,6 +1529,14 @@ class _ChapterEditorWidgetState extends ConsumerState<ChapterEditorWidget> {
                               label: const Text('风格体检'),
                             ),
                             OutlinedButton.icon(
+                              onPressed: _openFactReview,
+                              icon: const Icon(
+                                Icons.verified_user_outlined,
+                                size: 18,
+                              ),
+                              label: const Text('事实审稿'),
+                            ),
+                            OutlinedButton.icon(
                               onPressed: _summarizing
                                   ? null
                                   : _openSummarySheet,
@@ -1672,6 +1783,7 @@ class _SnapshotHistorySheet extends ConsumerWidget {
     'ai_insert' => 'AI 采纳前自动备份',
     'restore' => '回退前自动备份',
     'styleEval' => '风格体检改写前备份',
+    'factReview' => '事实审稿勘误前备份',
     _ => type,
   };
 
@@ -1765,6 +1877,275 @@ class _SnapshotHistorySheet extends ConsumerWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+class _LedgerConfirmDecision {
+  const _LedgerConfirmDecision({
+    required this.deltaIndices,
+    required this.newCharacterIndices,
+    required this.newWorldIndices,
+    required this.newForeshadowIndices,
+    required this.resolvedForeshadowIndices,
+  });
+
+  final Set<int> deltaIndices;
+  final Set<int> newCharacterIndices;
+  final Set<int> newWorldIndices;
+  final Set<int> newForeshadowIndices;
+  final Set<int> resolvedForeshadowIndices;
+}
+
+class _LedgerConfirmDialog extends StatefulWidget {
+  const _LedgerConfirmDialog({
+    required this.chapterTitle,
+    required this.extraction,
+  });
+
+  final String chapterTitle;
+  final ChapterLedgerExtraction extraction;
+
+  @override
+  State<_LedgerConfirmDialog> createState() => _LedgerConfirmDialogState();
+}
+
+class _LedgerConfirmDialogState extends State<_LedgerConfirmDialog> {
+  late final Set<int> _deltas;
+  late final Set<int> _newChars;
+  late final Set<int> _newWorlds;
+  late final Set<int> _newFs;
+  late final Set<int> _resolvedFs;
+
+  @override
+  void initState() {
+    super.initState();
+    final e = widget.extraction;
+    _deltas = Set<int>.from(List.generate(e.characterDeltas.length, (i) => i));
+    _newChars = Set<int>.from(List.generate(e.newCharacters.length, (i) => i));
+    _newWorlds = Set<int>.from(
+      List.generate(e.newWorldEntries.length, (i) => i),
+    );
+    _newFs = Set<int>.from(
+      List.generate(e.summaryResult.newForeshadowings.length, (i) => i),
+    );
+    _resolvedFs = Set<int>.from(
+      List.generate(
+        e.summaryResult.resolvedForeshadowingTitles.length,
+        (i) => i,
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final e = widget.extraction;
+    final cs = Theme.of(context).colorScheme;
+    return AlertDialog(
+      title: Text('确认写回活体账本 · ${widget.chapterTitle}'),
+      content: SizedBox(
+        width: 560,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: cs.surfaceContainerHighest.withValues(alpha: 0.45),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      '摘要预览（含 ${e.summaryResult.keyFacts.length} 条关键事实）',
+                      style: const TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      e.summaryResult.summary,
+                      maxLines: 4,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: cs.onSurfaceVariant,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              if (e.characterDeltas.isNotEmpty) ...[
+                const SizedBox(height: 12),
+                const Text(
+                  '角色状态变动（将局部更新角色卡）',
+                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+                ),
+                for (var i = 0; i < e.characterDeltas.length; i++)
+                  CheckboxListTile(
+                    dense: true,
+                    contentPadding: EdgeInsets.zero,
+                    controlAffinity: ListTileControlAffinity.leading,
+                    value: _deltas.contains(i),
+                    onChanged: (v) => setState(() {
+                      v == true ? _deltas.add(i) : _deltas.remove(i);
+                    }),
+                    title: Text(
+                      e.characterDeltas[i].name,
+                      style: const TextStyle(fontWeight: FontWeight.w600),
+                    ),
+                    subtitle: Text(
+                      e.characterDeltas[i].describeChanges(),
+                      style: const TextStyle(fontSize: 12),
+                    ),
+                  ),
+              ],
+              if (e.newCharacters.isNotEmpty) ...[
+                const SizedBox(height: 10),
+                const Text(
+                  '新出场角色（自动建卡）',
+                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+                ),
+                for (var i = 0; i < e.newCharacters.length; i++)
+                  CheckboxListTile(
+                    dense: true,
+                    contentPadding: EdgeInsets.zero,
+                    controlAffinity: ListTileControlAffinity.leading,
+                    value: _newChars.contains(i),
+                    onChanged: (v) => setState(() {
+                      v == true ? _newChars.add(i) : _newChars.remove(i);
+                    }),
+                    title: Text(e.newCharacters[i].name),
+                    subtitle: Text(
+                      [
+                        if (e.newCharacters[i].personality != null)
+                          e.newCharacters[i].personality!,
+                        if (e.newCharacters[i].currentLocation != null)
+                          '位置：${e.newCharacters[i].currentLocation}',
+                      ].join(' · '),
+                      style: const TextStyle(fontSize: 12),
+                    ),
+                  ),
+              ],
+              if (e.newWorldEntries.isNotEmpty) ...[
+                const SizedBox(height: 10),
+                const Text(
+                  '新世界观条目（附 Lorebook 触发词）',
+                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+                ),
+                for (var i = 0; i < e.newWorldEntries.length; i++)
+                  CheckboxListTile(
+                    dense: true,
+                    contentPadding: EdgeInsets.zero,
+                    controlAffinity: ListTileControlAffinity.leading,
+                    value: _newWorlds.contains(i),
+                    onChanged: (v) => setState(() {
+                      v == true ? _newWorlds.add(i) : _newWorlds.remove(i);
+                    }),
+                    title: Text(
+                      '[${e.newWorldEntries[i].category}] ${e.newWorldEntries[i].name}',
+                    ),
+                    subtitle: Text(
+                      '${e.newWorldEntries[i].content}${e.newWorldEntries[i].keywords.isEmpty ? '' : '\n触发词：${e.newWorldEntries[i].keywords.join('、')}'}',
+                      style: const TextStyle(fontSize: 12),
+                    ),
+                  ),
+              ],
+              if (e.summaryResult.newForeshadowings.isNotEmpty) ...[
+                const SizedBox(height: 10),
+                const Text(
+                  '新埋伏笔',
+                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+                ),
+                for (
+                  var i = 0;
+                  i < e.summaryResult.newForeshadowings.length;
+                  i++
+                )
+                  CheckboxListTile(
+                    dense: true,
+                    contentPadding: EdgeInsets.zero,
+                    controlAffinity: ListTileControlAffinity.leading,
+                    value: _newFs.contains(i),
+                    onChanged: (v) => setState(() {
+                      v == true ? _newFs.add(i) : _newFs.remove(i);
+                    }),
+                    title: Text(
+                      e.summaryResult.newForeshadowings[i].title ?? '未命名伏笔',
+                    ),
+                    subtitle:
+                        (e.summaryResult.newForeshadowings[i].detail ?? '')
+                            .isNotEmpty
+                        ? Text(
+                            e.summaryResult.newForeshadowings[i].detail!,
+                            style: const TextStyle(fontSize: 12),
+                          )
+                        : null,
+                  ),
+              ],
+              if (e.summaryResult.resolvedForeshadowingTitles.isNotEmpty) ...[
+                const SizedBox(height: 10),
+                const Text(
+                  '疑似已回收伏笔（标记待确认）',
+                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+                ),
+                for (
+                  var i = 0;
+                  i < e.summaryResult.resolvedForeshadowingTitles.length;
+                  i++
+                )
+                  CheckboxListTile(
+                    dense: true,
+                    contentPadding: EdgeInsets.zero,
+                    controlAffinity: ListTileControlAffinity.leading,
+                    value: _resolvedFs.contains(i),
+                    onChanged: (v) => setState(() {
+                      v == true ? _resolvedFs.add(i) : _resolvedFs.remove(i);
+                    }),
+                    title: Text(
+                      e.summaryResult.resolvedForeshadowingTitles[i],
+                    ),
+                  ),
+              ],
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('取消'),
+        ),
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(
+            const _LedgerConfirmDecision(
+              deltaIndices: {},
+              newCharacterIndices: {},
+              newWorldIndices: {},
+              newForeshadowIndices: {},
+              resolvedForeshadowIndices: {},
+            ),
+          ),
+          child: const Text('仅保存摘要'),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.of(context).pop(
+            _LedgerConfirmDecision(
+              deltaIndices: _deltas,
+              newCharacterIndices: _newChars,
+              newWorldIndices: _newWorlds,
+              newForeshadowIndices: _newFs,
+              resolvedForeshadowIndices: _resolvedFs,
+            ),
+          ),
+          child: const Text('写入账本与设定库'),
+        ),
+      ],
     );
   }
 }

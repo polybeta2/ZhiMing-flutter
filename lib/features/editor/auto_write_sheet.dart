@@ -1,10 +1,12 @@
+import 'dart:math' as math;
+
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 
+import '../../core/database/app_database.dart';
 import '../../core/database/novel_repository.dart';
-import '../../core/llm/llm_json_parser.dart';
 import '../../core/llm/llm_types.dart';
 import '../../core/llm/provider_client_factory.dart';
 import '../../core/llm/stream_progress.dart';
@@ -15,7 +17,9 @@ import '../../core/security/api_key_vault.dart';
 import '../../core/theme/design_tokens.dart';
 import '../../core/widgets/streaming_status_chip.dart';
 import '../../domain/models/novel_domain.dart';
+import '../../domain/writing/chapter_ledger.dart';
 import '../../domain/writing/context_builder.dart';
+import '../../domain/writing/fact_review_service.dart';
 
 /// 自动撰写流水线（修复原版 B3 三大缺陷：URL 安全校验、建档喂 reasoning 事件、空章 R18 语言回退细纲/梗概）
 class AutoWriteSheet extends ConsumerStatefulWidget {
@@ -38,6 +42,7 @@ class AutoWriteSheet extends ConsumerStatefulWidget {
 class _AutoWriteSheetState extends ConsumerState<AutoWriteSheet> {
   int _wordTarget = 2000;
   bool _antiAIInline = true;
+  bool _enableFactReviewGate = true;
   bool _running = false;
   String _status = '准备就绪';
   int _done = 0;
@@ -182,13 +187,71 @@ class _AutoWriteSheetState extends ConsumerState<AutoWriteSheet> {
         }
         if (_cancel?.isCancelled ?? false) break;
 
-        final draft = draftBuf.toString().trim();
+        var draft = draftBuf.toString().trim();
         if (draft.length < 200) {
           setState(
             () => _error =
                 '《${freshCh.chapter.title}》输出过短（${draft.length} 字），已自动停机保护；之前章节已保存。',
           );
           break;
+        }
+
+        // 1.5) 可选 5 维事实审稿拦截门（遇阻断硬伤至多自动定点修复 1 次）
+        var fixedBlockingCount = 0;
+        if (_enableFactReviewGate) {
+          setState(() => _status = '5 维事实审稿《${freshCh.chapter.title}》…');
+          final reviewer = FactReviewService(
+            client: client,
+            library: lib,
+            providerExtra: provider.systemPromptExtra,
+          );
+          final truthArchive = FactReviewService.buildTruthArchive(
+            chapter: freshCh,
+            bundle: bundle,
+            draftContent: draft,
+            sourceWindow: sourceWindow,
+          );
+          try {
+            _progress.begin();
+            final reviewRes = await reviewer.review(
+              truthArchive: truthArchive,
+              chapterTitle: freshCh.chapter.title,
+              draftContent: draft,
+              maxTokens: provider.maxTokens,
+              onEvent: _progress.handle,
+              cancelToken: _cancel,
+            );
+            if (_cancel?.isCancelled ?? false) break;
+            if (reviewRes.hasBlocking) {
+              fixedBlockingCount = reviewRes.blockingIssues.length;
+              setState(
+                () => _status =
+                    '发现 $fixedBlockingCount 处硬伤，自动定点勘误《${freshCh.chapter.title}》…',
+              );
+              _progress.begin();
+              final fixed = await reviewer.applyFixes(
+                truthArchive: truthArchive,
+                chapterTitle: freshCh.chapter.title,
+                draftContent: draft,
+                issues: reviewRes.blockingIssues,
+                maxTokens: provider.maxTokens,
+                onEvent: _progress.handle,
+                cancelToken: _cancel,
+              );
+              if (_cancel?.isCancelled ?? false) break;
+              if (fixed.length >= 200) {
+                // 把修复前初稿也记入快照，方便回溯
+                await repo.takeSnapshot(
+                  chapterId: freshCh.chapter.id,
+                  content: draft,
+                  triggerType: 'factReview',
+                );
+                draft = fixed;
+              }
+            }
+          } on FormatException {
+            // 审稿偶发 JSON 失真时不阻断整批流水线，继续落盘原草稿
+          }
         }
 
         await repo.takeSnapshot(
@@ -202,14 +265,19 @@ class _AutoWriteSheetState extends ConsumerState<AutoWriteSheet> {
           content: draft,
         );
 
-        // 2) 建档摘要（修复原版 B3：全事件喂给 progress，包含 reasoning）
-        setState(() => _status = '建档摘要《${freshCh.chapter.title}》…');
+        // 2) 活体账本建档摘要（单次提取摘要 + 角色状态变动 + 新实体并自动写回 DB）
+        setState(() => _status = '活体建档《${freshCh.chapter.title}》…');
         final sumMsgs = PromptTemplates.applyingExtra(
           provider.systemPromptExtra,
           PromptTemplates.summarize(
             library: lib,
             content: draft,
             title: freshCh.chapter.title,
+            existingCharacters: bundle.characters.map((c) => c.name).toList(),
+            openForeshadowings: bundle.foreshadowings
+                .where((f) => f.status == 'open')
+                .map((f) => f.title)
+                .toList(),
           ),
         );
         _progress.begin();
@@ -218,7 +286,7 @@ class _AutoWriteSheetState extends ConsumerState<AutoWriteSheet> {
           sumMsgs,
           config: GenerationConfig(
             temperature: 0.2,
-            maxTokens: provider.maxTokens,
+            maxTokens: math.max(provider.maxTokens, 12288),
           ),
           cancelToken: _cancel,
         )) {
@@ -227,22 +295,38 @@ class _AutoWriteSheetState extends ConsumerState<AutoWriteSheet> {
         }
         if (_cancel?.isCancelled ?? false) break;
 
-        final parsedSum = SummaryResult.tryParse(rawSum.toString());
-        if (parsedSum == null) {
+        final extraction = ChapterLedgerExtraction.tryParse(rawSum.toString());
+        if (extraction == null) {
           setState(
             () => _error =
                 '《${freshCh.chapter.title}》正文已保存，但摘要 JSON 解析失败，已暂停；手动建档后可继续。',
           );
           break;
         }
-        await repo.applySummaryResult(
+        final db = ref.read(appDatabaseProvider);
+        final ledgerReport = await ChapterLedgerApplier.applyToDb(
+          db: db,
+          repo: repo,
           novelId: widget.novelId,
           chapter: freshCh.chapter,
-          result: parsedSum,
+          extraction: extraction,
         );
+        final tags = <String>[
+          if (fixedBlockingCount > 0) '修复$fixedBlockingCount处矛盾',
+          if (ledgerReport.updatedCharacters > 0)
+            '状态+${ledgerReport.updatedCharacters}',
+          if (ledgerReport.createdCharacters > 0)
+            '新角色+${ledgerReport.createdCharacters}',
+          if (ledgerReport.createdWorldEntries > 0)
+            '新设定+${ledgerReport.createdWorldEntries}',
+        ];
         setState(() {
           _done++;
-          _completed.add(freshCh.chapter.title);
+          _completed.add(
+            tags.isEmpty
+                ? freshCh.chapter.title
+                : '${freshCh.chapter.title}（${tags.join('，')}）',
+          );
         });
       }
 
@@ -290,7 +374,7 @@ class _AutoWriteSheetState extends ConsumerState<AutoWriteSheet> {
                 SizedBox(width: 8),
                 Expanded(
                   child: Text(
-                    '按顺序补齐空白章节（每章「撰写 → 摘要建档」后强制落盘）。批量生成不保证每章完美，建议重要章仍逐章打磨。',
+                    '按顺序补齐空白章节（每章「撰写 → 5 维事实审稿门 → 活体建档自动推进角色状态」后落盘）。批量生成不保证每章完美，建议重要章仍逐章打磨。',
                     style: TextStyle(fontSize: 12),
                   ),
                 ),
@@ -322,6 +406,18 @@ class _AutoWriteSheetState extends ConsumerState<AutoWriteSheet> {
             onChanged: _running
                 ? null
                 : (v) => setState(() => _antiAIInline = v),
+          ),
+          SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            title: const Text('5 维事实审稿拦截门'),
+            subtitle: const Text(
+              '每章落盘前核查设定/时间线/连续性/人设信息壁垒/逻辑，发现阻断矛盾自动定点修复 1 次',
+              style: TextStyle(fontSize: 12),
+            ),
+            value: _enableFactReviewGate,
+            onChanged: _running
+                ? null
+                : (v) => setState(() => _enableFactReviewGate = v),
           ),
           if (_running || _total > 0) ...[
             const Divider(),

@@ -1,6 +1,7 @@
 import '../../core/database/app_database.dart' as db;
 import '../../core/prompts/prompt_limits.dart';
 import '../models/novel_domain.dart';
+import 'lorebook_matcher.dart';
 
 class BuiltContext {
   const BuiltContext({
@@ -100,17 +101,16 @@ abstract final class ContextBuilder {
       dynamicHigh.add(('关键事实', '【关键事实】\n${facts.map((f) => '- $f').join('\n')}'));
     }
 
-    final sceneChars = bundle.characters
-        .where((c) => c.isSceneRelevant)
-        .take(maxSceneCharacters)
-        .map(_renderCharacter)
-        .toList();
+    final lorebook = LorebookMatcher.selectForChapter(
+      chapter: chapter,
+      bundle: bundle,
+    );
+    final sceneChars = lorebook.characters.map(_renderCharacter).toList();
     if (sceneChars.isNotEmpty) {
       staticOptional.add(('角色状态', '【角色当前状态】\n${sceneChars.join('\n\n')}'));
     }
 
-    final world = bundle.worldEntries
-        .take(maxWorldEntries)
+    final world = lorebook.worldEntries
         .map((w) => '- [${w.category}] ${w.name}：${w.content}')
         .toList();
     if (world.isNotEmpty) {
