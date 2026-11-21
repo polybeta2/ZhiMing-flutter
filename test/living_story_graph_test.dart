@@ -2,10 +2,12 @@ import 'dart:io';
 
 import 'package:drift/drift.dart' show Value;
 import 'package:drift/native.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:zhiming/core/database/app_database.dart';
 import 'package:zhiming/core/database/novel_repository.dart';
 import 'package:zhiming/core/storage/blob_store.dart';
+import 'package:zhiming/core/widgets/character_graph_canvas.dart';
 import 'package:zhiming/domain/models/novel_domain.dart';
 import 'package:zhiming/domain/models/source_profile_models.dart';
 import 'package:zhiming/domain/writing/chapter_ledger.dart';
@@ -435,6 +437,88 @@ void main() {
       expect(truthArchive, contains('【人物关系网与明暗线边界】'));
       expect(truthArchive, contains('暗线/信息壁垒注意'));
       expect(truthArchive, contains('【显式故事时间线'));
+    });
+  });
+
+  group('CharacterGraphCanvas layout & widget', () {
+    test('deterministic force layout places nodes within bounds without NaN', () {
+      const nodes = [
+        GraphNode(id: 'a', name: '莫烬', camp: '独立', importance: 'major'),
+        GraphNode(id: 'b', name: '罗娜', camp: '群星之城', importance: 'major'),
+        GraphNode(id: 'c', name: '月莲', camp: '独立', importance: 'normal'),
+      ];
+      const edges = [
+        GraphEdge(
+          id: 'e1',
+          fromId: 'a',
+          toId: 'b',
+          relationType: '盟友',
+          label: '托付',
+          strength: 4,
+          line: '暗线',
+        ),
+        GraphEdge(
+          id: 'e2',
+          fromId: 'a',
+          toId: 'c',
+          relationType: '盟友',
+          label: '并肩',
+          strength: 5,
+          line: '明线',
+        ),
+      ];
+      final pos1 = CharacterGraphLayout.compute(
+        nodes,
+        edges,
+        canvasSize: const Size(800, 600),
+      );
+      final pos2 = CharacterGraphLayout.compute(
+        nodes,
+        edges,
+        canvasSize: const Size(800, 600),
+      );
+      expect(pos1.length, 3);
+      for (final id in ['a', 'b', 'c']) {
+        expect(pos1[id]!.dx.isFinite && pos1[id]!.dy.isFinite, isTrue);
+        expect(pos1[id], pos2[id]);
+      }
+    });
+
+    testWidgets('switches between graph canvas and list view cleanly', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        const MaterialApp(
+          home: Scaffold(
+            body: CharacterGraphCanvas(
+              nodes: [
+                GraphNode(id: 'a', name: '莫烬', camp: '独立', importance: 'major'),
+                GraphNode(
+                  id: 'b',
+                  name: '爱丽丝',
+                  camp: '灾祸',
+                  importance: 'major',
+                ),
+              ],
+              edges: [
+                GraphEdge(
+                  id: 'e1',
+                  fromId: 'a',
+                  toId: 'b',
+                  relationType: '敌对',
+                  label: '执念追杀',
+                  strength: 5,
+                  line: '暗线',
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+      expect(find.byType(InteractiveViewer), findsOneWidget);
+      await tester.tap(find.text('列表'));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('执念追杀'), findsOneWidget);
     });
   });
 }
