@@ -6,6 +6,7 @@ import 'package:uuid/uuid.dart';
 import '../../core/database/app_database.dart';
 import '../../core/database/novel_repository.dart';
 import '../../core/theme/design_tokens.dart';
+import '../../core/widgets/character_graph_canvas.dart';
 import '../../core/widgets/r18_toggle_tile.dart';
 import '../../core/widgets/zm_widgets.dart';
 import '../../domain/models/novel_domain.dart';
@@ -20,7 +21,7 @@ class BookSettingsView extends ConsumerStatefulWidget {
 }
 
 class _BookSettingsViewState extends ConsumerState<BookSettingsView> {
-  int _tab = 0; // 0: 基本信息, 1: 角色卡, 2: 世界观
+  int _tab = 0; // 0: 基本信息, 1: 角色卡, 2: 关系图谱, 3: 世界观
 
   @override
   Widget build(BuildContext context) {
@@ -33,32 +34,42 @@ class _BookSettingsViewState extends ConsumerState<BookSettingsView> {
             AppTokens.s4,
             AppTokens.s2,
           ),
-          child: SegmentedButton<int>(
-            segments: const [
-              ButtonSegment(
-                value: 0,
-                label: Text('作品信息'),
-                icon: Icon(Icons.tune_rounded, size: 16),
-              ),
-              ButtonSegment(
-                value: 1,
-                label: Text('角色卡'),
-                icon: Icon(Icons.people_outline, size: 16),
-              ),
-              ButtonSegment(
-                value: 2,
-                label: Text('世界观'),
-                icon: Icon(Icons.public_outlined, size: 16),
-              ),
-            ],
-            selected: {_tab},
-            onSelectionChanged: (s) => setState(() => _tab = s.first),
+          child: SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: SegmentedButton<int>(
+              showSelectedIcon: false,
+              segments: const [
+                ButtonSegment(
+                  value: 0,
+                  label: Text('作品信息'),
+                  icon: Icon(Icons.tune_rounded, size: 16),
+                ),
+                ButtonSegment(
+                  value: 1,
+                  label: Text('角色卡'),
+                  icon: Icon(Icons.people_outline, size: 16),
+                ),
+                ButtonSegment(
+                  value: 2,
+                  label: Text('关系图谱'),
+                  icon: Icon(Icons.hub_outlined, size: 16),
+                ),
+                ButtonSegment(
+                  value: 3,
+                  label: Text('世界观'),
+                  icon: Icon(Icons.public_outlined, size: 16),
+                ),
+              ],
+              selected: {_tab},
+              onSelectionChanged: (s) => setState(() => _tab = s.first),
+            ),
           ),
         ),
         Expanded(
           child: switch (_tab) {
             0 => _BasicMetaPane(novelId: widget.novelId),
             1 => _CharacterListPane(novelId: widget.novelId),
+            2 => _RelationGraphPane(novelId: widget.novelId),
             _ => _WorldListPane(novelId: widget.novelId),
           },
         ),
@@ -925,6 +936,329 @@ class _EditWorldEntryDialogState extends State<_EditWorldEntryDialog> {
                 keywords: keywords,
                 content: _contentCtrl.text.trim(),
                 isAlwaysOn: _isAlwaysOn,
+              ),
+            );
+          },
+          child: const Text('保存'),
+        ),
+      ],
+    );
+  }
+}
+
+class _RelationGraphPane extends ConsumerWidget {
+  const _RelationGraphPane({required this.novelId});
+  final String novelId;
+
+  Future<void> _editRelation(
+    BuildContext context,
+    WidgetRef ref,
+    List<Character> chars, [
+    CharacterRelation? existing,
+  ]) async {
+    if (chars.length < 2) {
+      showZmSnackBar(context, '至少需要 2 名角色才能建立关系', isError: true);
+      return;
+    }
+    final draft = await showDialog<_RelationDraft>(
+      context: context,
+      builder: (_) => _EditRelationDialog(
+        characters: chars,
+        existing: existing,
+      ),
+    );
+    if (draft == null) return;
+    await ref
+        .read(appDatabaseProvider)
+        .upsertCharacterRelation(
+          CharacterRelationsCompanion.insert(
+            id: existing?.id ?? const Uuid().v4(),
+            novelId: novelId,
+            sourceCharacterId: draft.sourceId,
+            targetCharacterId: draft.targetId,
+            relationType: Value(draft.relationType),
+            label: draft.label,
+            description: Value(draft.description),
+            strength: Value(draft.strength),
+            line: Value(draft.line),
+            evolutionJson: Value(existing?.evolutionJson ?? '[]'),
+            firstChapterOrder: Value(existing?.firstChapterOrder),
+            lastChapterOrder: Value(existing?.lastChapterOrder),
+            updatedAt: DateTime.now(),
+          ),
+        );
+    await ref.read(novelRepositoryProvider).touchNovel(novelId);
+  }
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final db = ref.watch(appDatabaseProvider);
+    return StreamBuilder<List<Character>>(
+      stream: db.watchCharacters(novelId),
+      builder: (context, charSnap) {
+        final chars = charSnap.data ?? const [];
+        return StreamBuilder<List<CharacterRelation>>(
+          stream: db.watchCharacterRelations(novelId),
+          builder: (context, relSnap) {
+            final rels = relSnap.data ?? const [];
+            final relById = {for (final r in rels) r.id: r};
+            final nodes = [
+              for (final c in chars)
+                GraphNode(
+                  id: c.id,
+                  name: c.name,
+                  camp: c.camp,
+                  role: c.role,
+                  importance: c.isSceneRelevant ? 'major' : 'normal',
+                  subtitle: [
+                    if ((c.currentLocation ?? '').isNotEmpty)
+                      '位置：${c.currentLocation}',
+                    if ((c.physicalState ?? '').isNotEmpty) c.physicalState!,
+                  ].join(' · '),
+                ),
+            ];
+            final edges = [
+              for (final r in rels)
+                GraphEdge(
+                  id: r.id,
+                  fromId: r.sourceCharacterId,
+                  toId: r.targetCharacterId,
+                  relationType: r.relationType,
+                  label: r.label,
+                  description: r.description,
+                  strength: r.strength,
+                  line: r.line,
+                  firstChapter: r.firstChapterOrder,
+                  lastChapter: r.lastChapterOrder,
+                  evolution: [
+                    for (final pt in RelationEvolutionPoint.decodeList(
+                      r.evolutionJson,
+                    ))
+                      (chapterLabel: pt.chapterLabel, state: pt.state),
+                  ],
+                ),
+            ];
+
+            return CharacterGraphCanvas(
+              nodes: nodes,
+              edges: edges,
+              onAddRelation: () => _editRelation(context, ref, chars),
+              onEditRelation: (edge) =>
+                  _editRelation(context, ref, chars, relById[edge.id]),
+              onDeleteRelation: (edge) async {
+                final ok = await showZmConfirmDialog(
+                  context,
+                  title: '删除关系「${edge.label}」？',
+                  message: '将同时移除该关系的历史演变记录。',
+                  confirmLabel: '删除',
+                  destructive: true,
+                );
+                if (ok) {
+                  await db.deleteCharacterRelation(edge.id);
+                  await ref.read(novelRepositoryProvider).touchNovel(novelId);
+                }
+              },
+            );
+          },
+        );
+      },
+    );
+  }
+}
+
+class _RelationDraft {
+  const _RelationDraft({
+    required this.sourceId,
+    required this.targetId,
+    required this.relationType,
+    required this.label,
+    required this.description,
+    required this.strength,
+    required this.line,
+  });
+
+  final String sourceId;
+  final String targetId;
+  final String relationType;
+  final String label;
+  final String description;
+  final int strength;
+  final String line;
+}
+
+class _EditRelationDialog extends StatefulWidget {
+  const _EditRelationDialog({required this.characters, this.existing});
+
+  final List<Character> characters;
+  final CharacterRelation? existing;
+
+  @override
+  State<_EditRelationDialog> createState() => _EditRelationDialogState();
+}
+
+class _EditRelationDialogState extends State<_EditRelationDialog> {
+  late String _sourceId;
+  late String _targetId;
+  late String _relationType;
+  late String _line;
+  late int _strength;
+  late final TextEditingController _labelCtrl;
+  late final TextEditingController _descCtrl;
+
+  @override
+  void initState() {
+    super.initState();
+    final e = widget.existing;
+    _sourceId = e?.sourceCharacterId ?? widget.characters.first.id;
+    _targetId = e?.targetCharacterId ??
+        widget.characters
+            .firstWhere(
+              (c) => c.id != _sourceId,
+              orElse: () => widget.characters.last,
+            )
+            .id;
+    _relationType = e?.relationType ?? '盟友';
+    _line = e?.line ?? '明线';
+    _strength = (e?.strength ?? 3).clamp(1, 5);
+    _labelCtrl = TextEditingController(text: e?.label ?? '');
+    _descCtrl = TextEditingController(text: e?.description ?? '');
+  }
+
+  @override
+  void dispose() {
+    _labelCtrl.dispose();
+    _descCtrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Text(widget.existing == null ? '新增人物关系' : '编辑人物关系'),
+      content: SizedBox(
+        width: 440,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: DropdownButtonFormField<String>(
+                      initialValue: _sourceId,
+                      decoration: const InputDecoration(labelText: '角色 A'),
+                      items: [
+                        for (final c in widget.characters)
+                          DropdownMenuItem(value: c.id, child: Text(c.name)),
+                      ],
+                      onChanged: (v) {
+                        if (v != null) setState(() => _sourceId = v);
+                      },
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: DropdownButtonFormField<String>(
+                      initialValue: _targetId,
+                      decoration: const InputDecoration(labelText: '角色 B'),
+                      items: [
+                        for (final c in widget.characters)
+                          DropdownMenuItem(value: c.id, child: Text(c.name)),
+                      ],
+                      onChanged: (v) {
+                        if (v != null) setState(() => _targetId = v);
+                      },
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 10),
+              Row(
+                children: [
+                  Expanded(
+                    child: DropdownButtonFormField<String>(
+                      initialValue: _relationType,
+                      decoration: const InputDecoration(labelText: '关系类型'),
+                      items: [
+                        for (final t in ['亲友', '盟友', '爱恋', '敌对', '从属', '竞争', '未知'])
+                          DropdownMenuItem(value: t, child: Text(t)),
+                      ],
+                      onChanged: (v) {
+                        if (v != null) setState(() => _relationType = v);
+                      },
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: DropdownButtonFormField<String>(
+                      initialValue: _line,
+                      decoration: const InputDecoration(labelText: '明暗线'),
+                      items: const [
+                        DropdownMenuItem(value: '明线', child: Text('明线（公开）')),
+                        DropdownMenuItem(value: '暗线', child: Text('暗线（秘密/隐藏）')),
+                      ],
+                      onChanged: (v) {
+                        if (v != null) setState(() => _line = v);
+                      },
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 10),
+              TextField(
+                controller: _labelCtrl,
+                decoration: const InputDecoration(
+                  labelText: '关系标签（如：生死同盟 / 宿敌追杀）',
+                ),
+              ),
+              const SizedBox(height: 10),
+              Row(
+                children: [
+                  const Text('羁绊/冲突强度：', style: TextStyle(fontSize: 13)),
+                  Expanded(
+                    child: Slider(
+                      value: _strength.toDouble(),
+                      min: 1,
+                      max: 5,
+                      divisions: 4,
+                      label: '$_strength',
+                      onChanged: (v) => setState(() => _strength = v.round()),
+                    ),
+                  ),
+                  Text('$_strength'),
+                ],
+              ),
+              TextField(
+                controller: _descCtrl,
+                minLines: 2,
+                maxLines: 4,
+                decoration: const InputDecoration(
+                  labelText: '关系详情与张力说明',
+                  alignLabelWithHint: true,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('取消'),
+        ),
+        FilledButton(
+          onPressed: () {
+            if (_sourceId == _targetId) return;
+            final label = _labelCtrl.text.trim();
+            Navigator.of(context).pop(
+              _RelationDraft(
+                sourceId: _sourceId,
+                targetId: _targetId,
+                relationType: _relationType,
+                label: label.isEmpty ? _relationType : label,
+                description: _descCtrl.text.trim(),
+                strength: _strength,
+                line: _line,
               ),
             );
           },

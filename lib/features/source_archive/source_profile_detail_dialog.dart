@@ -5,6 +5,8 @@ import 'package:go_router/go_router.dart';
 
 import '../../core/database/app_database.dart';
 import '../../core/storage/blob_store.dart';
+import '../../core/widgets/character_graph_canvas.dart';
+import '../../core/widgets/story_timeline_view.dart';
 import '../../core/widgets/zm_widgets.dart';
 import '../../domain/models/source_profile_models.dart';
 import 'source_injection_helper.dart';
@@ -40,7 +42,7 @@ class _SourceProfileDetailDialogState
   void initState() {
     super.initState();
     _profile = widget.initialProfile;
-    _tabs = TabController(length: 4, vsync: this);
+    _tabs = TabController(length: 5, vsync: this);
   }
 
   @override
@@ -568,8 +570,10 @@ class _SourceProfileDetailDialogState
             ),
             TabBar(
               controller: _tabs,
+              isScrollable: true,
               tabs: [
                 Tab(text: '人物 (${_profile.characters.length})'),
+                Tab(text: '关系图谱 (${_profile.relations.length})'),
                 Tab(text: '时间线 (${_profile.timeline.length})'),
                 Tab(text: '世界观 (${_profile.worldbuilding.length})'),
                 Tab(text: '伏笔与弧线 (${_profile.openThreads.length})'),
@@ -580,6 +584,7 @@ class _SourceProfileDetailDialogState
                 controller: _tabs,
                 children: [
                   _buildCharactersTab(),
+                  _buildRelationsTab(),
                   _buildTimelineTab(),
                   _buildWorldTab(),
                   _buildThreadsTab(),
@@ -590,6 +595,70 @@ class _SourceProfileDetailDialogState
         ),
       ),
     );
+  }
+
+  Widget _buildRelationsTab() {
+    final nodes = [
+      for (final c in _profile.characters)
+        GraphNode(
+          id: c.name,
+          name: c.name,
+          camp: c.camp,
+          role: c.role,
+          importance: c.importance.raw,
+          subtitle: c.currentState ?? c.oneLine,
+        ),
+    ];
+    final knownNames = nodes.map((n) => n.id).toSet();
+    final edges = <GraphEdge>[];
+    final seen = <String>{};
+    for (var i = 0; i < _profile.relations.length; i++) {
+      final r = _profile.relations[i];
+      if (!knownNames.contains(r.from) || !knownNames.contains(r.to)) continue;
+      final key = r.from.compareTo(r.to) <= 0
+          ? '${r.from}||${r.to}'
+          : '${r.to}||${r.from}';
+      seen.add(key);
+      edges.add(
+        GraphEdge(
+          id: 'rel_$i',
+          fromId: r.from,
+          toId: r.to,
+          relationType: r.relationType,
+          label: r.label.isNotEmpty ? r.label : r.relationType,
+          description: r.description,
+          strength: r.strength,
+          line: r.line,
+          firstChapter: r.firstChapter,
+          lastChapter: r.lastChapter,
+          evolution: [
+            for (final ev in r.evolution)
+              (chapterLabel: ev.chapterLabel, state: ev.state),
+          ],
+        ),
+      );
+    }
+    // 兼容旧档案：从 character.relationships 补充
+    var fallbackIdx = 0;
+    for (final c in _profile.characters) {
+      for (final rel in c.relationships) {
+        if (!knownNames.contains(rel.target) || rel.target == c.name) continue;
+        final key = c.name.compareTo(rel.target) <= 0
+            ? '${c.name}||${rel.target}'
+            : '${rel.target}||${c.name}';
+        if (!seen.add(key)) continue;
+        edges.add(
+          GraphEdge(
+            id: 'legacy_${fallbackIdx++}',
+            fromId: c.name,
+            toId: rel.target,
+            relationType: normalizeRelationType(rel.relation),
+            label: rel.relation,
+          ),
+        );
+      }
+    }
+    return CharacterGraphCanvas(nodes: nodes, edges: edges);
   }
 
   Widget _buildCharactersTab() {
@@ -657,57 +726,41 @@ class _SourceProfileDetailDialogState
   }
 
   Widget _buildTimelineTab() {
-    return ListView(
-      padding: const EdgeInsets.all(16),
-      children: [
-        Align(
-          alignment: Alignment.centerRight,
-          child: FilledButton.tonalIcon(
-            onPressed: () => _editEvent(null),
-            icon: const Icon(Icons.add, size: 18),
-            label: const Text('添加事件'),
-          ),
+    final items = [
+      for (var i = 0; i < _profile.timeline.length; i++)
+        TimelineEventItem(
+          id: '$i',
+          chapterLabel: (_profile.timeline[i].chapterRange ?? '').isNotEmpty
+              ? _profile.timeline[i].chapterRange!
+              : (_profile.timeline[i].chapterStart != null
+                    ? '第${_profile.timeline[i].chapterStart}章'
+                    : '阶段节点'),
+          inWorldTime: _profile.timeline[i].inWorldTime,
+          phase: _profile.timeline[i].phase,
+          title: _profile.timeline[i].summary.length <= 24
+              ? _profile.timeline[i].summary
+              : '${_profile.timeline[i].summary.substring(0, 23)}…',
+          summary: _profile.timeline[i].summary,
+          participants: _profile.timeline[i].participants,
+          linkedClueBadges: [
+            for (final c in _profile.timeline[i].linkedClueTitles) '[伏笔] $c',
+          ],
+          importance: _profile.timeline[i].importance.raw,
         ),
-        const SizedBox(height: 8),
-        for (var i = 0; i < _profile.timeline.length; i++)
-          Padding(
-            padding: const EdgeInsets.only(bottom: 10),
-            child: ZmCard(
-              onTap: () => _editEvent(i),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          [
-                            if (_profile.timeline[i].phase != null)
-                              _profile.timeline[i].phase!,
-                            if (_profile.timeline[i].chapterRange != null)
-                              _profile.timeline[i].chapterRange!,
-                            _profile.timeline[i].importance.label,
-                          ].join(' · '),
-                          style: Theme.of(context).textTheme.labelSmall,
-                        ),
-                        const SizedBox(height: 4),
-                        Text(_profile.timeline[i].summary),
-                      ],
-                    ),
-                  ),
-                  IconButton(
-                    icon: const Icon(Icons.delete_outline, size: 18),
-                    onPressed: () {
-                      final list = [..._profile.timeline]..removeAt(i);
-                      _save(_profile.copyWith(timeline: list));
-                    },
-                  ),
-                ],
-              ),
-            ),
-          ),
-      ],
+    ];
+    return StoryTimelineView(
+      events: items,
+      onAddEvent: () => _editEvent(null),
+      onEditEvent: (item) {
+        final idx = int.tryParse(item.id);
+        if (idx != null) _editEvent(idx);
+      },
+      onDeleteEvent: (item) {
+        final idx = int.tryParse(item.id);
+        if (idx == null || idx < 0 || idx >= _profile.timeline.length) return;
+        final list = [..._profile.timeline]..removeAt(idx);
+        _save(_profile.copyWith(timeline: list));
+      },
     );
   }
 
@@ -773,11 +826,11 @@ class _SourceProfileDetailDialogState
             ),
           const SizedBox(height: 12),
         ],
-        const ZmSectionHeader(title: '未回收伏笔'),
+        const ZmSectionHeader(title: '伏笔台账（含埋/收对账）'),
         if (_profile.openThreads.isEmpty)
           const Padding(
             padding: EdgeInsets.all(24),
-            child: Center(child: Text('暂无未回收伏笔（续写深度分析后自动提取）')),
+            child: Center(child: Text('暂无伏笔记录（续写深度分析后自动提取）')),
           )
         else
           for (final t in _profile.openThreads)
@@ -787,15 +840,71 @@ class _SourceProfileDetailDialogState
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            t.title,
+                            style: Theme.of(context).textTheme.titleSmall,
+                          ),
+                        ),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 7,
+                            vertical: 2,
+                          ),
+                          decoration: BoxDecoration(
+                            color: (t.status == 'resolved'
+                                    ? Colors.green
+                                    : (t.status == 'partial'
+                                          ? Colors.orange
+                                          : Colors.indigo))
+                                .withValues(alpha: 0.14),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Text(
+                            switch (t.status) {
+                              'resolved' => '已回收',
+                              'partial' => '部分推进',
+                              _ => '未回收',
+                            },
+                            style: TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w600,
+                              color: t.status == 'resolved'
+                                  ? Colors.green.shade700
+                                  : (t.status == 'partial'
+                                        ? Colors.orange.shade800
+                                        : Colors.indigo),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 4),
                     Text(
-                      t.plantedChapter != null
-                          ? '[第${t.plantedChapter}章] ${t.title}'
-                          : t.title,
-                      style: Theme.of(context).textTheme.titleSmall,
+                      [
+                        if (t.plantedChapter != null)
+                          t.resolvedChapter != null
+                              ? '第${t.plantedChapter}章埋 → 第${t.resolvedChapter}章收'
+                              : '埋设：第${t.plantedChapter}章',
+                        if (t.involvedCharacters.isNotEmpty)
+                          '角色：${t.involvedCharacters.join('、')}',
+                      ].join(' · '),
+                      style: Theme.of(context).textTheme.labelSmall,
                     ),
                     if (t.detail.isNotEmpty) ...[
                       const SizedBox(height: 4),
                       Text(t.detail),
+                    ],
+                    if ((t.payoffDetail ?? '').isNotEmpty) ...[
+                      const SizedBox(height: 4),
+                      Text(
+                        '回收说明：${t.payoffDetail}',
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: Colors.green.shade800,
+                        ),
+                      ),
                     ],
                   ],
                 ),

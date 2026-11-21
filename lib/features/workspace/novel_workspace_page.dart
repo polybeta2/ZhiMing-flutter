@@ -218,7 +218,34 @@ class _NovelWorkspacePageState extends ConsumerState<NovelWorkspacePage> {
           ),
           body: switch (_section) {
             0 => _buildWritingSection(isDesktop),
-            1 => OutlineAndForeshadowView(novelId: widget.novelId),
+            1 => OutlineAndForeshadowView(
+              novelId: widget.novelId,
+              onJumpToChapter: (chId) async {
+                if (isDesktop) {
+                  setState(() {
+                    _selectedChapterId = chId;
+                    _section = 0;
+                  });
+                } else {
+                  final ch = await ref.read(appDatabaseProvider).getChapter(chId);
+                  if (!context.mounted || ch == null) return;
+                  Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => Scaffold(
+                        appBar: AppBar(title: Text(ch.title)),
+                        body: ChapterEditorWidget(
+                          novelId: widget.novelId,
+                          chapterId: ch.id,
+                          onOpenStyleEval: widget.onOpenStyleEval,
+                          resolveStyleCard: widget.resolveStyleCard,
+                          resolveSourceWindow: widget.resolveSourceWindow,
+                        ),
+                      ),
+                    ),
+                  );
+                }
+              },
+            ),
             2 => BookSettingsView(novelId: widget.novelId),
             _ =>
               widget.assistantBuilder?.call(context, widget.novelId) ??

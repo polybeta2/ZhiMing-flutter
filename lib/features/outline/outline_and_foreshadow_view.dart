@@ -18,15 +18,22 @@ import '../../core/prompts/prompt_templates.dart';
 import '../../core/security/api_key_vault.dart';
 import '../../core/theme/design_tokens.dart';
 import '../../core/utils/prompt_guard.dart';
+import '../../core/widgets/story_timeline_view.dart';
 import '../../core/widgets/streaming_status_chip.dart';
 import '../../core/widgets/zm_widgets.dart';
 import '../../domain/models/novel_domain.dart';
 import '../../domain/writing/context_builder.dart';
 
-/// 作品「大纲与伏笔」统一视图：卷章四维结构 + AI 卷纲/细纲/批量细纲 + 独立伏笔台账
+/// 作品「大纲与伏笔」统一视图：卷章四维结构 + AI 卷纲/细纲/批量细纲 + 独立伏笔台账 + 故事时间线
 class OutlineAndForeshadowView extends ConsumerStatefulWidget {
-  const OutlineAndForeshadowView({super.key, required this.novelId});
+  const OutlineAndForeshadowView({
+    super.key,
+    required this.novelId,
+    this.onJumpToChapter,
+  });
+
   final String novelId;
+  final ValueChanged<String>? onJumpToChapter;
 
   @override
   ConsumerState<OutlineAndForeshadowView> createState() =>
@@ -35,7 +42,7 @@ class OutlineAndForeshadowView extends ConsumerStatefulWidget {
 
 class _OutlineAndForeshadowViewState
     extends ConsumerState<OutlineAndForeshadowView> {
-  int _tab = 0; // 0: 卷章大纲, 1: 伏笔台账
+  int _tab = 0; // 0: 卷章大纲, 1: 伏笔台账, 2: 故事时间线
 
   @override
   Widget build(BuildContext context) {
@@ -48,27 +55,41 @@ class _OutlineAndForeshadowViewState
             AppTokens.s4,
             AppTokens.s2,
           ),
-          child: SegmentedButton<int>(
-            segments: const [
-              ButtonSegment(
-                value: 0,
-                label: Text('卷章大纲'),
-                icon: Icon(Icons.format_list_numbered, size: 16),
-              ),
-              ButtonSegment(
-                value: 1,
-                label: Text('伏笔台账'),
-                icon: Icon(Icons.bookmark_border_rounded, size: 16),
-              ),
-            ],
-            selected: {_tab},
-            onSelectionChanged: (s) => setState(() => _tab = s.first),
+          child: SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: SegmentedButton<int>(
+              showSelectedIcon: false,
+              segments: const [
+                ButtonSegment(
+                  value: 0,
+                  label: Text('卷章大纲'),
+                  icon: Icon(Icons.format_list_numbered, size: 16),
+                ),
+                ButtonSegment(
+                  value: 1,
+                  label: Text('伏笔台账'),
+                  icon: Icon(Icons.bookmark_border_rounded, size: 16),
+                ),
+                ButtonSegment(
+                  value: 2,
+                  label: Text('故事时间线'),
+                  icon: Icon(Icons.timeline_rounded, size: 16),
+                ),
+              ],
+              selected: {_tab},
+              onSelectionChanged: (s) => setState(() => _tab = s.first),
+            ),
           ),
         ),
         Expanded(
-          child: _tab == 0
-              ? _OutlineListPane(novelId: widget.novelId)
-              : _ForeshadowListPane(novelId: widget.novelId),
+          child: switch (_tab) {
+            0 => _OutlineListPane(novelId: widget.novelId),
+            1 => _ForeshadowListPane(novelId: widget.novelId),
+            _ => _TimelinePane(
+              novelId: widget.novelId,
+              onJumpToChapter: widget.onJumpToChapter,
+            ),
+          },
         ),
       ],
     );
@@ -1465,6 +1486,7 @@ class _ForeshadowListPaneState extends ConsumerState<_ForeshadowListPane> {
               children: [
                 for (final entry in const [
                   ('open', '未回收'),
+                  ('partial', '部分推进'),
                   ('resolved', '已回收'),
                   ('dropped', '已废弃'),
                   ('all', '全部'),
@@ -1545,9 +1567,18 @@ class _ForeshadowListPaneState extends ConsumerState<_ForeshadowListPane> {
                                   Text(fs.detail!),
                                 Text(
                                   [
-                                    if (fs.plantedVolumeIndex != null &&
-                                        fs.plantedChapterOrder != null)
-                                      '埋设：第${fs.plantedVolumeIndex}卷第${fs.plantedChapterOrder}章',
+                                    if (fs.status == 'partial') '状态：部分推进',
+                                    if (fs.status == 'resolved') '状态：已回收',
+                                    if (fs.plantedChapterOrder != null)
+                                      fs.resolvedChapterOrder != null
+                                          ? '第${fs.plantedChapterOrder}章埋 → 第${fs.resolvedChapterOrder}章收'
+                                          : '埋设：第${fs.plantedChapterOrder}章',
+                                    if (decodeStringList(
+                                      fs.involvedCharactersJson,
+                                    ).isNotEmpty)
+                                      '角色：${decodeStringList(fs.involvedCharactersJson).join('、')}',
+                                    if ((fs.payoffDetail ?? '').isNotEmpty)
+                                      '回收：${fs.payoffDetail}',
                                     if ((fs.plannedResolve ?? '').isNotEmpty)
                                       '计划回收：${fs.plannedResolve}',
                                   ].join(' · '),
@@ -1590,3 +1621,310 @@ class _ForeshadowListPaneState extends ConsumerState<_ForeshadowListPane> {
 
 // 预留供大纲 JSON 解码辅助使用
 String encodeOutlineJson(Object data) => jsonEncode(data);
+
+class _TimelinePane extends ConsumerWidget {
+  const _TimelinePane({required this.novelId, this.onJumpToChapter});
+
+  final String novelId;
+  final ValueChanged<String>? onJumpToChapter;
+
+  Future<void> _editEvent(
+    BuildContext context,
+    WidgetRef ref, [
+    TimelineEvent? existing,
+  ]) async {
+    final draft = await showDialog<_TimelineDraft>(
+      context: context,
+      builder: (_) => _EditTimelineEventDialog(existing: existing),
+    );
+    if (draft == null) return;
+    await ref
+        .read(appDatabaseProvider)
+        .upsertTimelineEvent(
+          TimelineEventsCompanion.insert(
+            id: existing?.id ?? const Uuid().v4(),
+            novelId: novelId,
+            volumeId: Value(existing?.volumeId),
+            chapterId: Value(existing?.chapterId),
+            chapterOrder: Value(draft.chapterOrder),
+            chapterRange: Value(draft.chapterRange),
+            inWorldTime: Value(draft.inWorldTime),
+            phase: Value(draft.phase),
+            title: draft.title,
+            summary: Value(draft.summary),
+            location: Value(draft.location),
+            participantsJson: Value(encodeStringList(draft.participants)),
+            linkedForeshadowingIdsJson: Value(
+              existing?.linkedForeshadowingIdsJson ?? '[]',
+            ),
+            importance: Value(draft.importance),
+            sortOrder: Value(existing?.sortOrder ?? 0),
+            createdAt: existing?.createdAt ?? DateTime.now(),
+          ),
+        );
+    await ref.read(novelRepositoryProvider).touchNovel(novelId);
+  }
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final db = ref.watch(appDatabaseProvider);
+    return StreamBuilder<List<Foreshadowing>>(
+      stream: db.watchForeshadowings(novelId),
+      builder: (context, fsSnap) {
+        final fsById = {for (final f in (fsSnap.data ?? const [])) f.id: f};
+        return StreamBuilder<List<TimelineEvent>>(
+          stream: db.watchTimelineEvents(novelId),
+          builder: (context, evSnap) {
+            final events = evSnap.data ?? const [];
+            final evById = {for (final e in events) e.id: e};
+            final items = [
+              for (final e in events)
+                TimelineEventItem(
+                  id: e.id,
+                  chapterId: e.chapterId,
+                  chapterLabel: (e.chapterRange ?? '').isNotEmpty
+                      ? e.chapterRange!
+                      : (e.chapterOrder != null
+                            ? '第${e.chapterOrder}章'
+                            : '未定章'),
+                  inWorldTime: e.inWorldTime,
+                  phase: e.phase,
+                  title: e.title,
+                  summary: e.summary,
+                  location: e.location,
+                  participants: decodeStringList(e.participantsJson),
+                  linkedClueBadges: [
+                    for (final fid in decodeStringList(
+                      e.linkedForeshadowingIdsJson,
+                    ))
+                      if (fsById[fid] != null)
+                        '${fsById[fid]!.status == 'resolved' ? '[收]' : '[埋]'} ${fsById[fid]!.title}',
+                  ],
+                  importance: e.importance,
+                ),
+            ];
+            return StoryTimelineView(
+              events: items,
+              onAddEvent: () => _editEvent(context, ref),
+              onEditEvent: (item) => _editEvent(context, ref, evById[item.id]),
+              onDeleteEvent: (item) async {
+                final ok = await showZmConfirmDialog(
+                  context,
+                  title: '删除时间线事件「${item.title}」？',
+                  message: '删除后无法恢复。',
+                  confirmLabel: '删除',
+                  destructive: true,
+                );
+                if (ok) {
+                  await db.deleteTimelineEvent(item.id);
+                  await ref.read(novelRepositoryProvider).touchNovel(novelId);
+                }
+              },
+              onJumpToChapter: onJumpToChapter,
+            );
+          },
+        );
+      },
+    );
+  }
+}
+
+class _TimelineDraft {
+  const _TimelineDraft({
+    required this.title,
+    required this.summary,
+    this.chapterOrder,
+    this.chapterRange,
+    this.inWorldTime,
+    this.phase,
+    this.location,
+    this.participants = const [],
+    this.importance = 'normal',
+  });
+
+  final String title;
+  final String summary;
+  final int? chapterOrder;
+  final String? chapterRange;
+  final String? inWorldTime;
+  final String? phase;
+  final String? location;
+  final List<String> participants;
+  final String importance;
+}
+
+class _EditTimelineEventDialog extends StatefulWidget {
+  const _EditTimelineEventDialog({this.existing});
+  final TimelineEvent? existing;
+
+  @override
+  State<_EditTimelineEventDialog> createState() =>
+      _EditTimelineEventDialogState();
+}
+
+class _EditTimelineEventDialogState extends State<_EditTimelineEventDialog> {
+  late final TextEditingController _titleCtrl;
+  late final TextEditingController _summaryCtrl;
+  late final TextEditingController _chapterCtrl;
+  late final TextEditingController _timeCtrl;
+  late final TextEditingController _phaseCtrl;
+  late final TextEditingController _locCtrl;
+  late final TextEditingController _partsCtrl;
+  late String _importance;
+
+  @override
+  void initState() {
+    super.initState();
+    final e = widget.existing;
+    _titleCtrl = TextEditingController(text: e?.title ?? '');
+    _summaryCtrl = TextEditingController(text: e?.summary ?? '');
+    _chapterCtrl = TextEditingController(
+      text: e?.chapterOrder?.toString() ?? '',
+    );
+    _timeCtrl = TextEditingController(text: e?.inWorldTime ?? '');
+    _phaseCtrl = TextEditingController(text: e?.phase ?? '');
+    _locCtrl = TextEditingController(text: e?.location ?? '');
+    _partsCtrl = TextEditingController(
+      text: decodeStringList(e?.participantsJson).join('，'),
+    );
+    _importance = e?.importance ?? 'normal';
+  }
+
+  @override
+  void dispose() {
+    _titleCtrl.dispose();
+    _summaryCtrl.dispose();
+    _chapterCtrl.dispose();
+    _timeCtrl.dispose();
+    _phaseCtrl.dispose();
+    _locCtrl.dispose();
+    _partsCtrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Text(widget.existing == null ? '新增时间线事件' : '编辑时间线事件'),
+      content: SizedBox(
+        width: 460,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: _titleCtrl,
+                decoration: const InputDecoration(labelText: '事件标题'),
+              ),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  Expanded(
+                    child: TextField(
+                      controller: _chapterCtrl,
+                      keyboardType: TextInputType.number,
+                      decoration: const InputDecoration(labelText: '章序（数字）'),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: TextField(
+                      controller: _timeCtrl,
+                      decoration: const InputDecoration(labelText: '书内时间'),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  Expanded(
+                    child: TextField(
+                      controller: _phaseCtrl,
+                      decoration: const InputDecoration(labelText: '剧情阶段/篇名'),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: DropdownButtonFormField<String>(
+                      initialValue: _importance,
+                      decoration: const InputDecoration(labelText: '重要度'),
+                      items: const [
+                        DropdownMenuItem(value: 'major', child: Text('核心里程碑')),
+                        DropdownMenuItem(value: 'normal', child: Text('普通事件')),
+                        DropdownMenuItem(value: 'minor', child: Text('次要细节')),
+                      ],
+                      onChanged: (v) {
+                        if (v != null) setState(() => _importance = v);
+                      },
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              TextField(
+                controller: _locCtrl,
+                decoration: const InputDecoration(labelText: '发生地点（可选）'),
+              ),
+              const SizedBox(height: 8),
+              TextField(
+                controller: _partsCtrl,
+                decoration: const InputDecoration(labelText: '参与角色（逗号分隔）'),
+              ),
+              const SizedBox(height: 8),
+              TextField(
+                controller: _summaryCtrl,
+                minLines: 2,
+                maxLines: 4,
+                decoration: const InputDecoration(
+                  labelText: '事件摘要与因果结果',
+                  alignLabelWithHint: true,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('取消'),
+        ),
+        FilledButton(
+          onPressed: () {
+            final title = _titleCtrl.text.trim();
+            if (title.isEmpty) return;
+            final chOrd = int.tryParse(_chapterCtrl.text.trim());
+            final parts = _partsCtrl.text
+                .split(RegExp(r'[,，、;；]+'))
+                .map((s) => s.trim())
+                .where((s) => s.isNotEmpty)
+                .toList();
+            Navigator.of(context).pop(
+              _TimelineDraft(
+                title: title,
+                summary: _summaryCtrl.text.trim().isEmpty
+                    ? title
+                    : _summaryCtrl.text.trim(),
+                chapterOrder: chOrd,
+                chapterRange: chOrd != null ? '第$chOrd章' : null,
+                inWorldTime: _timeCtrl.text.trim().isEmpty
+                    ? null
+                    : _timeCtrl.text.trim(),
+                phase: _phaseCtrl.text.trim().isEmpty
+                    ? null
+                    : _phaseCtrl.text.trim(),
+                location: _locCtrl.text.trim().isEmpty
+                    ? null
+                    : _locCtrl.text.trim(),
+                participants: parts,
+                importance: _importance,
+              ),
+            );
+          },
+          child: const Text('保存'),
+        ),
+      ],
+    );
+  }
+}

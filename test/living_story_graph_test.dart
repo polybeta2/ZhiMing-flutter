@@ -8,6 +8,7 @@ import 'package:zhiming/core/database/app_database.dart';
 import 'package:zhiming/core/database/novel_repository.dart';
 import 'package:zhiming/core/storage/blob_store.dart';
 import 'package:zhiming/core/widgets/character_graph_canvas.dart';
+import 'package:zhiming/core/widgets/story_timeline_view.dart';
 import 'package:zhiming/domain/models/novel_domain.dart';
 import 'package:zhiming/domain/models/source_profile_models.dart';
 import 'package:zhiming/domain/writing/chapter_ledger.dart';
@@ -519,6 +520,58 @@ void main() {
       await tester.tap(find.text('列表'));
       await tester.pumpAndSettle();
       expect(find.textContaining('执念追杀'), findsOneWidget);
+    });
+  });
+
+  group('StoryTimelineView widget', () {
+    testWidgets('filters by participant and invokes onJumpToChapter', (
+      tester,
+    ) async {
+      String? jumpedId;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: StoryTimelineView(
+              events: const [
+                TimelineEventItem(
+                  id: 't1',
+                  chapterId: 'ch-1',
+                  chapterLabel: '第1章',
+                  inWorldTime: '2029年7月8日',
+                  phase: '开局',
+                  title: '钟表屋逃亡',
+                  summary: '薇拉送出银色怀表',
+                  participants: ['莫烬', '薇拉'],
+                  linkedClueBadges: ['[埋] 银色怀表'],
+                  importance: 'major',
+                ),
+                TimelineEventItem(
+                  id: 't2',
+                  chapterId: 'ch-50',
+                  chapterLabel: '第50章',
+                  phase: '星光之城',
+                  title: '重逢林医生',
+                  summary: '娼馆门外偶遇',
+                  participants: ['莫烬', '林医生'],
+                  importance: 'normal',
+                ),
+              ],
+              onJumpToChapter: (id) => jumpedId = id,
+            ),
+          ),
+        ),
+      );
+
+      expect(find.text('钟表屋逃亡'), findsOneWidget);
+      expect(find.text('重逢林医生'), findsOneWidget);
+      await tester.tap(find.text('第1章'));
+      await tester.pump();
+      expect(jumpedId, 'ch-1');
+
+      await tester.tap(find.text('林医生').first);
+      await tester.pumpAndSettle();
+      expect(find.text('重逢林医生'), findsOneWidget);
+      expect(find.text('钟表屋逃亡'), findsNothing);
     });
   });
 }
