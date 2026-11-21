@@ -6,8 +6,12 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:zhiming/core/database/app_database.dart';
 import 'package:zhiming/core/database/novel_repository.dart';
 import 'package:zhiming/core/storage/blob_store.dart';
+import 'package:zhiming/domain/models/novel_domain.dart';
 import 'package:zhiming/domain/models/source_profile_models.dart';
 import 'package:zhiming/domain/writing/chapter_ledger.dart';
+import 'package:zhiming/domain/writing/context_builder.dart';
+import 'package:zhiming/domain/writing/fact_review_service.dart';
+import 'package:zhiming/domain/writing/lorebook_matcher.dart';
 import 'package:zhiming/features/source_archive/source_injection_helper.dart';
 
 void main() {
@@ -298,6 +302,139 @@ void main() {
       final events = await db.getTimelineEvents('n1');
       expect(events.single.title, '击杀3号载体');
       expect(events.single.chapterOrder, 249);
+    });
+  });
+
+  group('LorebookMatcher, ContextBuilder & FactReview relation/timeline integration', () {
+    test('1-hop recalls secret relation partner and injects relation & timeline blocks', () {
+      final now = DateTime(2026, 11, 21);
+      final c1 = Character(
+        id: 'c1',
+        novelId: 'n1',
+        name: '莫烬',
+        aliasesJson: '[]',
+        arcJson: '[]',
+        isSceneRelevant: true,
+        sortOrder: 0,
+      );
+      final c2 = Character(
+        id: 'c2',
+        novelId: 'n1',
+        name: '爱丽丝',
+        aliasesJson: '[]',
+        arcJson: '[]',
+        isSceneRelevant: false,
+        sortOrder: 1,
+      );
+      final rel = CharacterRelation(
+        id: 'r1',
+        novelId: 'n1',
+        sourceCharacterId: 'c1',
+        targetCharacterId: 'c2',
+        relationType: '敌对',
+        label: '执念追杀',
+        description: '暗中监视莫烬',
+        strength: 5,
+        line: '暗线',
+        status: 'active',
+        evolutionJson: '[]',
+        updatedAt: now,
+      );
+      final ev = TimelineEvent(
+        id: 't1',
+        novelId: 'n1',
+        chapterOrder: 1,
+        inWorldTime: '2029年7月8日',
+        phase: '开局',
+        title: '钟表屋逃亡',
+        summary: '薇拉用银色怀表送走莫烬',
+        participantsJson: '["莫烬","薇拉"]',
+        linkedForeshadowingIdsJson: '[]',
+        importance: 'major',
+        sortOrder: 0,
+        createdAt: now,
+      );
+      final ch1 = ChapterBundle(
+        chapter: Chapter(
+          id: 'ch1',
+          volumeId: 'v1',
+          title: '第1章',
+          content: '钟表屋逃亡。',
+          sortOrder: 1,
+          wordCount: 6,
+          isOriginal: false,
+          updatedAt: now,
+        ),
+        volumeId: 'v1',
+        volumeName: '第一卷',
+      );
+      final ch2 = ChapterBundle(
+        chapter: Chapter(
+          id: 'ch2',
+          volumeId: 'v1',
+          title: '第2章',
+          detailedOutline: '莫烬囤积食物应对第一波侵蚀',
+          content: '',
+          sortOrder: 2,
+          wordCount: 0,
+          isOriginal: false,
+          updatedAt: now,
+        ),
+        volumeId: 'v1',
+        volumeName: '第一卷',
+      );
+      final bundle = NovelBundle(
+        novel: Novel(
+          id: 'n1',
+          title: '测试',
+          synopsis: '',
+          enabledTagIdsJson: '[]',
+          r18Enabled: false,
+          lastTotalWordCount: 0,
+          createdAt: now,
+          updatedAt: now,
+        ),
+        volumes: [
+          VolumeBundle(
+            volume: Volume(
+              id: 'v1',
+              novelId: 'n1',
+              name: '第一卷',
+              sortOrder: 1,
+            ),
+            chapters: [ch1, ch2],
+          ),
+        ],
+        characters: [c1, c2],
+        worldEntries: const [],
+        foreshadowings: const [],
+        relations: [rel],
+        timelineEvents: [ev],
+      );
+
+      final sel = LorebookMatcher.selectForChapter(chapter: ch2, bundle: bundle);
+      expect(sel.characters.map((c) => c.id), contains('c2'));
+      expect(sel.relations.length, 1);
+
+      final ctx = ContextBuilder.buildContinueContext(
+        chapter: ch2,
+        bundle: bundle,
+        budgetChars: 20000,
+      );
+      expect(ctx.staticPrefix, contains('【人物关系网'));
+      expect(ctx.staticPrefix, contains('爱丽丝'));
+      expect(ctx.staticPrefix, contains('暗线'));
+      expect(ctx.dynamicSuffix, contains('【故事时间线锚点】'));
+      expect(ctx.dynamicSuffix, contains('钟表屋逃亡'));
+
+      final truthArchive = FactReviewService.buildTruthArchive(
+        chapter: ch2,
+        bundle: bundle,
+        draftContent: '莫烬在公寓中等待天黑。',
+      );
+      expect(truthArchive, contains('【人物关系网与明暗线边界】'));
+      expect(truthArchive, contains('暗线/信息壁垒注意'));
+      expect(truthArchive, contains('【显式故事时间线'));
     });
   });
 }

@@ -7,23 +7,27 @@ class LorebookSelection {
   const LorebookSelection({
     required this.characters,
     required this.worldEntries,
+    this.relations = const [],
     this.triggeredCharacterIds = const {},
     this.triggeredWorldEntryIds = const {},
   });
 
   final List<db.Character> characters;
   final List<db.WorldEntry> worldEntries;
+  final List<db.CharacterRelation> relations;
   final Set<String> triggeredCharacterIds;
   final Set<String> triggeredWorldEntryIds;
 }
 
 /// 关键词触发 + 常驻规则的 Lorebook 匹配器：
 /// 扫描 [本章细纲 + 场景卡 + 上一章末尾 600 字 + 本章末尾 800 字]，
-/// 自动激活相关角色与世界观条目；结果按 sortOrder 稳定排序，避免无谓破坏 KV 缓存前缀。
+/// 自动激活相关角色、1-hop 高强/暗线关联角色、结构化关系边与世界观条目；
+/// 结果按 sortOrder/id 稳定排序，避免无谓破坏 KV 缓存前缀。
 abstract final class LorebookMatcher {
   static const int defaultMaxCharacters = 16;
   static const int defaultMaxWorldEntries = 16;
   static const int defaultFallbackWorldEntries = 6;
+  static const int defaultMaxRelations = 12;
 
   static LorebookSelection selectForChapter({
     required ChapterBundle chapter,
@@ -31,15 +35,18 @@ abstract final class LorebookMatcher {
     int maxCharacters = defaultMaxCharacters,
     int maxWorldEntries = defaultMaxWorldEntries,
     int fallbackWorldEntries = defaultFallbackWorldEntries,
+    int maxRelations = defaultMaxRelations,
   }) {
     final probe = buildProbeText(chapter: chapter, bundle: bundle);
     return selectByProbe(
       probeText: probe,
       characters: bundle.characters,
       worldEntries: bundle.worldEntries,
+      relations: bundle.relations,
       maxCharacters: maxCharacters,
       maxWorldEntries: maxWorldEntries,
       fallbackWorldEntries: fallbackWorldEntries,
+      maxRelations: maxRelations,
     );
   }
 
@@ -85,9 +92,11 @@ abstract final class LorebookMatcher {
     required String probeText,
     required List<db.Character> characters,
     required List<db.WorldEntry> worldEntries,
+    List<db.CharacterRelation> relations = const [],
     int maxCharacters = defaultMaxCharacters,
     int maxWorldEntries = defaultMaxWorldEntries,
     int fallbackWorldEntries = defaultFallbackWorldEntries,
+    int maxRelations = defaultMaxRelations,
   }) {
     final probeLower = probeText.toLowerCase();
 
@@ -114,16 +123,68 @@ abstract final class LorebookMatcher {
     }
 
     final pickedChars = <db.Character>[];
+    final pickedCharIds = <String>{};
     for (final c in triggeredChars) {
       if (pickedChars.length >= maxCharacters) break;
-      pickedChars.add(c);
+      if (pickedCharIds.add(c.id)) pickedChars.add(c);
     }
+
+    // 1.5) 1-hop 关系联带召回：若触发角色存在高强度(>=4)或暗线关系，补入对手方角色
+    if (relations.isNotEmpty &&
+        triggeredCharIds.isNotEmpty &&
+        pickedChars.length < maxCharacters) {
+      final charById = {for (final c in orderedChars) c.id: c};
+      final sortedRels = [...relations]..sort((a, b) => a.id.compareTo(b.id));
+      for (final r in sortedRels) {
+        if (pickedChars.length >= maxCharacters) break;
+        if (r.status == 'broken') continue;
+        final isPriority = r.strength >= 4 || r.line == '暗线';
+        if (!isPriority) continue;
+        String? partnerId;
+        if (triggeredCharIds.contains(r.sourceCharacterId)) {
+          partnerId = r.targetCharacterId;
+        } else if (triggeredCharIds.contains(r.targetCharacterId)) {
+          partnerId = r.sourceCharacterId;
+        }
+        if (partnerId != null && !pickedCharIds.contains(partnerId)) {
+          final partner = charById[partnerId];
+          if (partner != null && pickedCharIds.add(partner.id)) {
+            pickedChars.add(partner);
+          }
+        }
+      }
+    }
+
     for (final c in alwaysOnChars) {
       if (pickedChars.length >= maxCharacters) break;
-      pickedChars.add(c);
+      if (pickedCharIds.add(c.id)) pickedChars.add(c);
     }
     // 最终按稳定 sortOrder 排序，保护 KV 前缀缓存
     pickedChars.sort(_compareCharacter);
+
+    // 1.8) 筛选与入选角色相关的结构化关系边（稳定排序保护 KV 前缀）
+    final pickedRelations = <db.CharacterRelation>[];
+    if (relations.isNotEmpty && pickedCharIds.isNotEmpty) {
+      final candidates = relations.where((r) {
+        if (r.status == 'broken') return false;
+        final bothIn =
+            pickedCharIds.contains(r.sourceCharacterId) &&
+            pickedCharIds.contains(r.targetCharacterId);
+        if (bothIn) return true;
+        final touchTriggered =
+            triggeredCharIds.contains(r.sourceCharacterId) ||
+            triggeredCharIds.contains(r.targetCharacterId);
+        return touchTriggered && (r.strength >= 4 || r.line == '暗线');
+      }).toList()
+        ..sort((a, b) {
+          final darkA = a.line == '暗线' ? 1 : 0;
+          final darkB = b.line == '暗线' ? 1 : 0;
+          final cmp = (b.strength + darkB * 2).compareTo(a.strength + darkA * 2);
+          return cmp != 0 ? cmp : a.id.compareTo(b.id);
+        });
+      pickedRelations.addAll(candidates.take(maxRelations));
+      pickedRelations.sort((a, b) => a.id.compareTo(b.id));
+    }
 
     // 2) 世界观匹配：条目名/触发关键词命中 + isAlwaysOn 常驻，零命中则回退前 6 条
     final triggeredWorlds = <db.WorldEntry>[];
@@ -164,6 +225,7 @@ abstract final class LorebookMatcher {
     return LorebookSelection(
       characters: pickedChars,
       worldEntries: pickedWorlds,
+      relations: pickedRelations,
       triggeredCharacterIds: triggeredCharIds,
       triggeredWorldEntryIds: triggeredWorldIds,
     );

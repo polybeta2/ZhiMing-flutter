@@ -101,6 +101,14 @@ abstract final class ContextBuilder {
       dynamicHigh.add(('关键事实', '【关键事实】\n${facts.map((f) => '- $f').join('\n')}'));
     }
 
+    final timelineAnchor = _renderTimelineAnchors(
+      bundle.timelineEvents,
+      beforeChapter: currentGlobal,
+    );
+    if (timelineAnchor != null) {
+      dynamicHigh.add(('故事时间线', timelineAnchor));
+    }
+
     final lorebook = LorebookMatcher.selectForChapter(
       chapter: chapter,
       bundle: bundle,
@@ -108,6 +116,14 @@ abstract final class ContextBuilder {
     final sceneChars = lorebook.characters.map(_renderCharacter).toList();
     if (sceneChars.isNotEmpty) {
       staticOptional.add(('角色状态', '【角色当前状态】\n${sceneChars.join('\n\n')}'));
+    }
+
+    final relBlock = _renderRelationsBlock(
+      lorebook.relations,
+      bundle.characters,
+    );
+    if (relBlock != null) {
+      staticOptional.add(('人物关系网', relBlock));
     }
 
     final world = lorebook.worldEntries
@@ -656,5 +672,67 @@ abstract final class ContextBuilder {
     var tail = latest.chapter.content;
     if (tail.length > limit) tail = tail.substring(tail.length - limit);
     return '《${latest.chapter.title}》末尾：\n$tail';
+  }
+
+  static String? _renderRelationsBlock(
+    List<db.CharacterRelation> relations,
+    List<db.Character> characters,
+  ) {
+    if (relations.isEmpty) return null;
+    final nameById = {for (final c in characters) c.id: c.name};
+    final lines = <String>[];
+    for (final r in relations) {
+      final a = nameById[r.sourceCharacterId];
+      final b = nameById[r.targetCharacterId];
+      if (a == null || b == null) continue;
+      final evo = RelationEvolutionPoint.decodeList(r.evolutionJson);
+      final latestEvo = evo.isNotEmpty
+          ? '；最新：${evo.last.chapterLabel} ${evo.last.state}'
+          : '';
+      final desc = r.description.trim().isNotEmpty
+          ? '（${r.description.trim()}）'
+          : '';
+      lines.add(
+        '- $a ↔ $b［${r.relationType}·${r.line}·强度${r.strength}］：${r.label}$desc$latestEvo',
+      );
+    }
+    if (lines.isEmpty) return null;
+    return '【人物关系网（含明暗线）】\n${lines.join('\n')}';
+  }
+
+  static String? _renderTimelineAnchors(
+    List<db.TimelineEvent> events, {
+    required int beforeChapter,
+  }) {
+    if (events.isEmpty) return null;
+    final prior = events
+        .where(
+          (e) => e.chapterOrder == null || e.chapterOrder! < beforeChapter,
+        )
+        .toList();
+    if (prior.isEmpty) return null;
+    final recent = prior.length > 4 ? prior.sublist(prior.length - 4) : prior;
+    final majors = prior
+        .where((e) => e.importance == 'major')
+        .toList();
+    final majorPicked = majors.length > 4
+        ? majors.sublist(majors.length - 4)
+        : majors;
+    final seen = <String>{};
+    final merged = <db.TimelineEvent>[];
+    for (final e in [...majorPicked, ...recent]) {
+      if (seen.add(e.id)) merged.add(e);
+    }
+    merged.sort(
+      (a, b) => (a.chapterOrder ?? 0).compareTo(b.chapterOrder ?? 0),
+    );
+    final lines = merged.map((e) {
+      final chTag = e.chapterRange ??
+          (e.chapterOrder != null ? '第${e.chapterOrder}章' : '前期');
+      final timeTag =
+          (e.inWorldTime ?? '').isNotEmpty ? ' | ${e.inWorldTime}' : '';
+      return '- [$chTag$timeTag] ${e.title}：${e.summary}';
+    });
+    return '【故事时间线锚点】\n${lines.join('\n')}';
   }
 }

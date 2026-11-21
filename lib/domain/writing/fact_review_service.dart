@@ -252,6 +252,7 @@ class FactReviewService {
       probeText: probe,
       characters: bundle.characters,
       worldEntries: bundle.worldEntries,
+      relations: bundle.relations,
       maxCharacters: 20,
       maxWorldEntries: 20,
       fallbackWorldEntries: 8,
@@ -285,6 +286,22 @@ class FactReviewService {
       sections.add('【角色档案与当前状态】\n${charBlocks.join('\n\n')}');
     }
 
+    if (lore.relations.isNotEmpty) {
+      final nameById = {for (final c in bundle.characters) c.id: c.name};
+      final relLines = <String>[];
+      for (final r in lore.relations) {
+        final a = nameById[r.sourceCharacterId];
+        final b = nameById[r.targetCharacterId];
+        if (a == null || b == null) continue;
+        final secretTag = r.line == '暗线' ? '【暗线/信息壁垒注意】' : '';
+        final desc = r.description.trim().isNotEmpty ? '（${r.description.trim()}）' : '';
+        relLines.add('- $a ↔ $b［${r.relationType}·${r.line}·强度${r.strength}］$secretTag：${r.label}$desc');
+      }
+      if (relLines.isNotEmpty) {
+        sections.add('【人物关系网与明暗线边界】\n${relLines.join('\n')}');
+      }
+    }
+
     if (lore.worldEntries.isNotEmpty) {
       final worldLines = lore.worldEntries.map(
         (w) => '- [${w.category}] ${w.name}：${w.content}',
@@ -292,9 +309,27 @@ class FactReviewService {
       sections.add('【世界观与硬规则】\n${worldLines.join('\n')}');
     }
 
-    // 4) 最近 5 章摘要与关键事实
+    // 4) 最近 5 章摘要与关键事实 + 显式时间线事件
     final positions = bundle.globalIndexMap();
     final currentGlobal = positions[chapter.chapter.id] ?? (all.length + 1);
+    final priorTimeline = bundle.timelineEvents
+        .where((e) => e.chapterOrder == null || e.chapterOrder! < currentGlobal)
+        .toList();
+    if (priorTimeline.isNotEmpty) {
+      final recentTl = priorTimeline.length > 6
+          ? priorTimeline.sublist(priorTimeline.length - 6)
+          : priorTimeline;
+      final tlLines = recentTl.map((e) {
+        final chTag = e.chapterRange ??
+            (e.chapterOrder != null ? '第${e.chapterOrder}章' : '前期');
+        final timeTag =
+            (e.inWorldTime ?? '').isNotEmpty ? ' | ${e.inWorldTime}' : '';
+        final locTag =
+            (e.location ?? '').isNotEmpty ? ' @${e.location}' : '';
+        return '- [$chTag$timeTag$locTag] ${e.title}：${e.summary}';
+      });
+      sections.add('【显式故事时间线（用于核对先后与时空位置）】\n${tlLines.join('\n')}');
+    }
     final prevWithSummary = all
         .where(
           (c) =>
