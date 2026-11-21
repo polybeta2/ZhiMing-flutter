@@ -78,12 +78,20 @@ abstract final class PromptTemplates {
     required String title,
     List<String> existingCharacters = const [],
     List<String> openForeshadowings = const [],
+    List<String> existingRelations = const [],
   }) {
     final system = library.resolvedText(PromptID.summarize);
     final user = StringBuffer();
     if (existingCharacters.isNotEmpty) {
       user.writeln('【已有角色列表（用于姓名对齐，未出场勿填）】');
       user.writeln(existingCharacters.join('、'));
+      user.writeln();
+    }
+    if (existingRelations.isNotEmpty) {
+      user.writeln('【已有主要人物关系（仅在关系发生实质变化时填入 relationship_deltas）】');
+      for (final r in existingRelations.take(20)) {
+        user.writeln('- $r');
+      }
       user.writeln();
     }
     if (openForeshadowings.isNotEmpty) {

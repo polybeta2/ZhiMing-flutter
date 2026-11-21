@@ -813,10 +813,22 @@ class _ChapterEditorWidgetState extends ConsumerState<ChapterEditorWidget> {
       return;
     }
     final db = ref.read(appDatabaseProvider);
+    final repo = ref.read(novelRepositoryProvider);
     final existingChars = await db.getCharacters(widget.novelId);
+    final existingRels = await db.getCharacterRelations(widget.novelId);
+    final charNameById = {for (final c in existingChars) c.id: c.name};
+    final relationHints = [
+      for (final r in existingRels.take(20))
+        if (charNameById[r.sourceCharacterId] != null &&
+            charNameById[r.targetCharacterId] != null)
+          '${charNameById[r.sourceCharacterId]} ↔ ${charNameById[r.targetCharacterId]}［${r.relationType}·${r.line}］：${r.label}',
+    ];
     final openFs = (await db.getForeshadowings(
       widget.novelId,
-    )).where((f) => f.status == 'open').map((f) => f.title).toList();
+    )).where((f) => f.status != 'resolved').map((f) => f.title).toList();
+    final bundleForOrder = await repo.loadBundle(widget.novelId);
+    final chapterOrder =
+        bundleForOrder?.globalIndexMap()[_chapter!.id] ?? _chapter!.sortOrder;
 
     final msgs = PromptTemplates.applyingExtra(
       provider.systemPromptExtra,
@@ -826,6 +838,7 @@ class _ChapterEditorWidgetState extends ConsumerState<ChapterEditorWidget> {
         title: _chapter!.title,
         existingCharacters: existingChars.map((c) => c.name).toList(),
         openForeshadowings: openFs,
+        existingRelations: relationHints,
       ),
     );
     if (!mounted) return;
@@ -865,7 +878,6 @@ class _ChapterEditorWidgetState extends ConsumerState<ChapterEditorWidget> {
       }
 
       if (!mounted) return;
-      final repo = ref.read(novelRepositoryProvider);
       if (extraction.hasWriteBackCandidates) {
         final decision = await showDialog<_LedgerConfirmDecision>(
           context: context,
@@ -880,12 +892,15 @@ class _ChapterEditorWidgetState extends ConsumerState<ChapterEditorWidget> {
           repo: repo,
           novelId: widget.novelId,
           chapter: _chapter!,
+          chapterOrder: chapterOrder,
           extraction: extraction,
           selectedDeltaIndices: decision.deltaIndices,
           selectedNewCharacterIndices: decision.newCharacterIndices,
           selectedNewWorldIndices: decision.newWorldIndices,
           selectedNewForeshadowIndices: decision.newForeshadowIndices,
           selectedResolvedForeshadowIndices: decision.resolvedForeshadowIndices,
+          selectedRelationDeltaIndices: decision.relationDeltaIndices,
+          selectedTimelineEventIndices: decision.timelineEventIndices,
         );
         if (mounted) {
           showZmSnackBar(
@@ -899,6 +914,7 @@ class _ChapterEditorWidgetState extends ConsumerState<ChapterEditorWidget> {
           repo: repo,
           novelId: widget.novelId,
           chapter: _chapter!,
+          chapterOrder: chapterOrder,
           extraction: extraction,
         );
         if (mounted) {
@@ -1900,6 +1916,8 @@ class _LedgerConfirmDecision {
     required this.newWorldIndices,
     required this.newForeshadowIndices,
     required this.resolvedForeshadowIndices,
+    required this.relationDeltaIndices,
+    required this.timelineEventIndices,
   });
 
   final Set<int> deltaIndices;
@@ -1907,6 +1925,8 @@ class _LedgerConfirmDecision {
   final Set<int> newWorldIndices;
   final Set<int> newForeshadowIndices;
   final Set<int> resolvedForeshadowIndices;
+  final Set<int> relationDeltaIndices;
+  final Set<int> timelineEventIndices;
 }
 
 class _LedgerConfirmDialog extends StatefulWidget {
@@ -1928,6 +1948,8 @@ class _LedgerConfirmDialogState extends State<_LedgerConfirmDialog> {
   late final Set<int> _newWorlds;
   late final Set<int> _newFs;
   late final Set<int> _resolvedFs;
+  late final Set<int> _relDeltas;
+  late final Set<int> _timelineEvents;
 
   @override
   void initState() {
@@ -1946,6 +1968,12 @@ class _LedgerConfirmDialogState extends State<_LedgerConfirmDialog> {
         e.summaryResult.resolvedForeshadowingTitles.length,
         (i) => i,
       ),
+    );
+    _relDeltas = Set<int>.from(
+      List.generate(e.relationshipDeltas.length, (i) => i),
+    );
+    _timelineEvents = Set<int>.from(
+      List.generate(e.timelineEvents.length, (i) => i),
     );
   }
 
@@ -2124,6 +2152,58 @@ class _LedgerConfirmDialogState extends State<_LedgerConfirmDialog> {
                     ),
                   ),
               ],
+              if (e.relationshipDeltas.isNotEmpty) ...[
+                const SizedBox(height: 10),
+                const Text(
+                  '人物关系变动（写入关系图谱）',
+                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+                ),
+                for (var i = 0; i < e.relationshipDeltas.length; i++)
+                  CheckboxListTile(
+                    dense: true,
+                    contentPadding: EdgeInsets.zero,
+                    controlAffinity: ListTileControlAffinity.leading,
+                    value: _relDeltas.contains(i),
+                    onChanged: (v) => setState(() {
+                      v == true ? _relDeltas.add(i) : _relDeltas.remove(i);
+                    }),
+                    title: Text(
+                      '${e.relationshipDeltas[i].from} ↔ ${e.relationshipDeltas[i].to}［${e.relationshipDeltas[i].relationType}·${e.relationshipDeltas[i].line}］',
+                    ),
+                    subtitle: Text(
+                      '${e.relationshipDeltas[i].label}${e.relationshipDeltas[i].changeNote != null ? ' · ${e.relationshipDeltas[i].changeNote}' : ''}',
+                      style: const TextStyle(fontSize: 12),
+                    ),
+                  ),
+              ],
+              if (e.timelineEvents.isNotEmpty) ...[
+                const SizedBox(height: 10),
+                const Text(
+                  '故事时间线事件',
+                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+                ),
+                for (var i = 0; i < e.timelineEvents.length; i++)
+                  CheckboxListTile(
+                    dense: true,
+                    contentPadding: EdgeInsets.zero,
+                    controlAffinity: ListTileControlAffinity.leading,
+                    value: _timelineEvents.contains(i),
+                    onChanged: (v) => setState(() {
+                      v == true
+                          ? _timelineEvents.add(i)
+                          : _timelineEvents.remove(i);
+                    }),
+                    title: Text(e.timelineEvents[i].title),
+                    subtitle: Text(
+                      [
+                        if (e.timelineEvents[i].inWorldTime != null)
+                          e.timelineEvents[i].inWorldTime!,
+                        e.timelineEvents[i].summary,
+                      ].join(' · '),
+                      style: const TextStyle(fontSize: 12),
+                    ),
+                  ),
+              ],
             ],
           ),
         ),
@@ -2141,6 +2221,8 @@ class _LedgerConfirmDialogState extends State<_LedgerConfirmDialog> {
               newWorldIndices: {},
               newForeshadowIndices: {},
               resolvedForeshadowIndices: {},
+              relationDeltaIndices: {},
+              timelineEventIndices: {},
             ),
           ),
           child: const Text('仅保存摘要'),
@@ -2153,6 +2235,8 @@ class _LedgerConfirmDialogState extends State<_LedgerConfirmDialog> {
               newWorldIndices: _newWorlds,
               newForeshadowIndices: _newFs,
               resolvedForeshadowIndices: _resolvedFs,
+              relationDeltaIndices: _relDeltas,
+              timelineEventIndices: _timelineEvents,
             ),
           ),
           child: const Text('写入账本与设定库'),

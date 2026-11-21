@@ -113,6 +113,27 @@ abstract final class PromptDefaults {
       "keywords": ["用于后续触发检索的1-4个关键词"],
       "content": "简洁设定说明（不超过120字）"
     }
+  ],
+  "relationship_deltas": [
+    {
+      "from": "角色A（与已有/新出场角色名一致）",
+      "to": "角色B",
+      "relation_type": "亲友|盟友|爱恋|敌对|从属|竞争|未知",
+      "label": "简短关系标签（2-8字）",
+      "strength": 4,
+      "line": "明线|暗线",
+      "change_note": "本章导致关系确立或发生变化的一句话"
+    }
+  ],
+  "timeline_events": [
+    {
+      "in_world_time": "书内时间锚点（正文有明确时间推进则填，否则省略）",
+      "title": "本章核心事件短标题（不超过18字）",
+      "summary": "关键因果与结果（不超过60字）",
+      "location": "地点（可选）",
+      "participants": ["角色A", "角色B"],
+      "importance": "major|normal"
+    }
   ]
 }
 铁律：
@@ -120,7 +141,8 @@ abstract final class PromptDefaults {
 2. character_deltas 只填本章**实际发生状态改变**的角色与字段，未变化的字段省略或填 null，不要把没出场的角色写进来；
 3. new_characters 只收**不在已有角色列表内**且有独立姓名的新角色，路人甲/群演一律不收；
 4. new_world_entries 只收本章首次明确给出的硬规则、重要道具、新地点或新势力，常识或普通物件不收；
-5. 若某数组无新条目，输出空数组 [] 即可，严禁编造。''',
+5. relationship_deltas 只填本章**新确立或发生明显变化**的角色关系（若涉及隐瞒/单方不知情则 line 填 "暗线"）；timeline_events 仅收录本章 1-2 条具有跨章意义的里程碑事件；
+6. 若某数组无新条目，输出空数组 [] 即可，严禁编造。''',
     ),
     BuiltInPrompt(
       id: PromptID.factReview,

@@ -280,8 +280,18 @@ class _AutoWriteSheetState extends ConsumerState<AutoWriteSheet> {
           content: draft,
         );
 
-        // 2) 活体账本建档摘要（单次提取摘要 + 角色状态变动 + 新实体并自动写回 DB）
+        // 2) 活体账本建档摘要（单次提取摘要 + 角色状态变动 + 关系/时间线并自动写回 DB）
         setState(() => _status = '活体建档《${freshCh.chapter.title}》…');
+        final charNameById = {for (final c in bundle.characters) c.id: c.name};
+        final relHints = [
+          for (final r in bundle.relations.take(20))
+            if (charNameById[r.sourceCharacterId] != null &&
+                charNameById[r.targetCharacterId] != null)
+              '${charNameById[r.sourceCharacterId]} ↔ ${charNameById[r.targetCharacterId]}［${r.relationType}·${r.line}］：${r.label}',
+        ];
+        final chapterOrder =
+            bundle.globalIndexMap()[freshCh.chapter.id] ??
+            freshCh.chapter.sortOrder;
         final sumMsgs = PromptTemplates.applyingExtra(
           provider.systemPromptExtra,
           PromptTemplates.summarize(
@@ -290,9 +300,10 @@ class _AutoWriteSheetState extends ConsumerState<AutoWriteSheet> {
             title: freshCh.chapter.title,
             existingCharacters: bundle.characters.map((c) => c.name).toList(),
             openForeshadowings: bundle.foreshadowings
-                .where((f) => f.status == 'open')
+                .where((f) => f.status != 'resolved')
                 .map((f) => f.title)
                 .toList(),
+            existingRelations: relHints,
           ),
         );
         _progress.begin();
@@ -324,6 +335,7 @@ class _AutoWriteSheetState extends ConsumerState<AutoWriteSheet> {
           repo: repo,
           novelId: widget.novelId,
           chapter: freshCh.chapter,
+          chapterOrder: chapterOrder,
           extraction: extraction,
         );
         final tags = <String>[
@@ -332,6 +344,10 @@ class _AutoWriteSheetState extends ConsumerState<AutoWriteSheet> {
             '状态+${ledgerReport.updatedCharacters}',
           if (ledgerReport.createdCharacters > 0)
             '新角色+${ledgerReport.createdCharacters}',
+          if (ledgerReport.updatedRelations > 0)
+            '关系+${ledgerReport.updatedRelations}',
+          if (ledgerReport.addedTimelineEvents > 0)
+            '时间线+${ledgerReport.addedTimelineEvents}',
           if (ledgerReport.createdWorldEntries > 0)
             '新设定+${ledgerReport.createdWorldEntries}',
         ];

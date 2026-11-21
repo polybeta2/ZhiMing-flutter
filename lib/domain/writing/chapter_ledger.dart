@@ -5,6 +5,7 @@ import '../../core/database/app_database.dart';
 import '../../core/database/novel_repository.dart';
 import '../../core/llm/llm_json_parser.dart';
 import '../models/novel_domain.dart';
+import '../models/source_profile_models.dart' show normalizeRelationType;
 
 /// 单章提取出的已有角色状态增量（仅含本章发生变化的字段）。
 class CharacterStateDelta {
@@ -130,24 +131,123 @@ class NewWorldEntry {
   }
 }
 
-/// 活体账本单次提取完整结果（兼容旧 SummaryResult 结构并扩展实体增量）。
+/// 单章提取出的人物关系变动（新确立或演变）。
+class RelationshipDelta {
+  const RelationshipDelta({
+    required this.from,
+    required this.to,
+    this.relationType = '未知',
+    required this.label,
+    this.strength = 3,
+    this.line = '明线',
+    this.changeNote,
+  });
+
+  final String from;
+  final String to;
+  final String relationType;
+  final String label;
+  final int strength;
+  final String line;
+  final String? changeNote;
+
+  static RelationshipDelta? fromJson(dynamic raw) {
+    if (raw is! Map) return null;
+    final from = _cleanText(raw['from'] ?? raw['a']);
+    final to = _cleanText(raw['to'] ?? raw['b']);
+    if (from == null || to == null || from == to) return null;
+    final type = normalizeRelationType(
+      (raw['relation_type'] ?? raw['relationType'] ?? raw['kind'])?.toString(),
+    );
+    final label = _cleanText(raw['label'] ?? raw['relation']) ?? type;
+    final rawStrength = (raw['strength'] as num?)?.toInt() ?? 3;
+    final rawLine = (raw['line'] ?? '明线').toString().trim();
+    return RelationshipDelta(
+      from: from,
+      to: to,
+      relationType: type,
+      label: label,
+      strength: rawStrength.clamp(1, 5),
+      line: rawLine.contains('暗') ? '暗线' : '明线',
+      changeNote: _cleanText(raw['change_note'] ?? raw['changeNote']),
+    );
+  }
+}
+
+/// 单章提取出的故事时间线事件节点。
+class NewTimelineEvent {
+  const NewTimelineEvent({
+    required this.title,
+    required this.summary,
+    this.inWorldTime,
+    this.location,
+    this.participants = const [],
+    this.importance = 'normal',
+  });
+
+  final String title;
+  final String summary;
+  final String? inWorldTime;
+  final String? location;
+  final List<String> participants;
+  final String importance;
+
+  static NewTimelineEvent? fromJson(dynamic raw) {
+    if (raw is! Map) return null;
+    final title = _cleanText(raw['title']);
+    final summary = _cleanText(raw['summary']) ?? title;
+    if (summary == null) return null;
+    final effectiveTitle = title ??
+        (summary.length <= 20 ? summary : '${summary.substring(0, 19)}…');
+    final partsRaw = raw['participants'];
+    final participants = partsRaw is List
+        ? partsRaw
+              .map((e) => e.toString().trim())
+              .where((s) => s.isNotEmpty)
+              .take(8)
+              .toList()
+        : <String>[];
+    final rawImp = (raw['importance']?.toString().trim().toLowerCase() ?? 'normal');
+    final imp = switch (rawImp) {
+      'major' || '核心' => 'major',
+      'minor' || '次要' => 'minor',
+      _ => 'normal',
+    };
+    return NewTimelineEvent(
+      title: effectiveTitle,
+      summary: summary,
+      inWorldTime: _cleanText(raw['in_world_time'] ?? raw['inWorldTime']),
+      location: _cleanText(raw['location']),
+      participants: participants,
+      importance: imp,
+    );
+  }
+}
+
+/// 活体账本单次提取完整结果（兼容旧 SummaryResult 结构并扩展实体、关系与时间线增量）。
 class ChapterLedgerExtraction {
   const ChapterLedgerExtraction({
     required this.summaryResult,
     this.characterDeltas = const [],
     this.newCharacters = const [],
     this.newWorldEntries = const [],
+    this.relationshipDeltas = const [],
+    this.timelineEvents = const [],
   });
 
   final SummaryResult summaryResult;
   final List<CharacterStateDelta> characterDeltas;
   final List<NewCharacterEntry> newCharacters;
   final List<NewWorldEntry> newWorldEntries;
+  final List<RelationshipDelta> relationshipDeltas;
+  final List<NewTimelineEvent> timelineEvents;
 
   bool get hasWriteBackCandidates =>
       characterDeltas.isNotEmpty ||
       newCharacters.isNotEmpty ||
       newWorldEntries.isNotEmpty ||
+      relationshipDeltas.isNotEmpty ||
+      timelineEvents.isNotEmpty ||
       summaryResult.newForeshadowings.isNotEmpty ||
       summaryResult.resolvedForeshadowingTitles.isNotEmpty;
 
@@ -203,6 +303,24 @@ class ChapterLedgerExtraction {
                 .toList()
           : <NewWorldEntry>[];
 
+      final relDeltasRaw = json['relationship_deltas'];
+      final relDeltas = relDeltasRaw is List
+          ? relDeltasRaw
+                .map(RelationshipDelta.fromJson)
+                .whereType<RelationshipDelta>()
+                .take(8)
+                .toList()
+          : <RelationshipDelta>[];
+
+      final timelineRaw = json['timeline_events'];
+      final timelineEvents = timelineRaw is List
+          ? timelineRaw
+                .map(NewTimelineEvent.fromJson)
+                .whereType<NewTimelineEvent>()
+                .take(4)
+                .toList()
+          : <NewTimelineEvent>[];
+
       return ChapterLedgerExtraction(
         summaryResult: SummaryResult(
           summary: summary,
@@ -213,6 +331,8 @@ class ChapterLedgerExtraction {
         characterDeltas: deltas,
         newCharacters: newChars,
         newWorldEntries: newWorlds,
+        relationshipDeltas: relDeltas,
+        timelineEvents: timelineEvents,
       );
     });
   }
@@ -226,6 +346,8 @@ class LedgerApplyReport {
     this.createdWorldEntries = 0,
     this.createdForeshadowings = 0,
     this.flaggedResolvedForeshadowings = 0,
+    this.updatedRelations = 0,
+    this.addedTimelineEvents = 0,
   });
 
   final int updatedCharacters;
@@ -233,18 +355,24 @@ class LedgerApplyReport {
   final int createdWorldEntries;
   final int createdForeshadowings;
   final int flaggedResolvedForeshadowings;
+  final int updatedRelations;
+  final int addedTimelineEvents;
 
   int get totalEntityMutations =>
       updatedCharacters +
       createdCharacters +
       createdWorldEntries +
       createdForeshadowings +
-      flaggedResolvedForeshadowings;
+      flaggedResolvedForeshadowings +
+      updatedRelations +
+      addedTimelineEvents;
 
   String formatSummary() {
     final parts = <String>[];
     if (updatedCharacters > 0) parts.add('角色状态更新 $updatedCharacters');
     if (createdCharacters > 0) parts.add('新增角色 $createdCharacters');
+    if (updatedRelations > 0) parts.add('关系演变 $updatedRelations');
+    if (addedTimelineEvents > 0) parts.add('时间线 +$addedTimelineEvents');
     if (createdWorldEntries > 0) parts.add('新增设定 $createdWorldEntries');
     if (createdForeshadowings > 0) parts.add('新伏笔 $createdForeshadowings');
     if (flaggedResolvedForeshadowings > 0) {
@@ -256,7 +384,7 @@ class LedgerApplyReport {
 
 /// 活体账本事务写回器：
 /// - 手动建档模式：传入勾选集合（selected*Indices），只应用作者确认的条目；
-/// - 自动撰写流水线模式：省略勾选集合（默认全选），单章完成后自动推进角色状态与新实体。
+/// - 自动撰写流水线模式：省略勾选集合（默认全选），单章完成后自动推进角色状态、关系演变与时间线。
 abstract final class ChapterLedgerApplier {
   static const _uuid = Uuid();
 
@@ -266,12 +394,15 @@ abstract final class ChapterLedgerApplier {
     required String novelId,
     required Chapter chapter,
     required ChapterLedgerExtraction extraction,
+    int? chapterOrder,
     bool applySummary = true,
     Set<int>? selectedDeltaIndices,
     Set<int>? selectedNewCharacterIndices,
     Set<int>? selectedNewWorldIndices,
     Set<int>? selectedNewForeshadowIndices,
     Set<int>? selectedResolvedForeshadowIndices,
+    Set<int>? selectedRelationDeltaIndices,
+    Set<int>? selectedTimelineEventIndices,
   }) async {
     var createdFsCount = 0;
     var resolvedFsCount = 0;
@@ -435,7 +566,156 @@ abstract final class ChapterLedgerApplier {
       createdWorlds++;
     }
 
-    if (updatedChars > 0 || createdChars > 0 || createdWorlds > 0) {
+    // 4) 应用人物关系变动（在已有关系边上追加 evolutionJson，不覆盖历史轨迹）
+    var updatedRelations = 0;
+    if (extraction.relationshipDeltas.isNotEmpty) {
+      final now = DateTime.now();
+      final existingRels = await db.getCharacterRelations(novelId);
+      final byPair = <String, CharacterRelation>{};
+      String relPairKey(String a, String b) =>
+          a.compareTo(b) <= 0 ? '$a||$b' : '$b||$a';
+      for (final r in existingRels) {
+        byPair[relPairKey(r.sourceCharacterId, r.targetCharacterId)] = r;
+      }
+
+      for (var i = 0; i < extraction.relationshipDeltas.length; i++) {
+        if (selectedRelationDeltaIndices != null &&
+            !selectedRelationDeltaIndices.contains(i)) {
+          continue;
+        }
+        final delta = extraction.relationshipDeltas[i];
+        final fromChar = knownCharKeys[delta.from.trim().toLowerCase()];
+        final toChar = knownCharKeys[delta.to.trim().toLowerCase()];
+        if (fromChar == null || toChar == null || fromChar.id == toChar.id) {
+          continue;
+        }
+        final key = relPairKey(fromChar.id, toChar.id);
+        final existing = byPair[key];
+        final noteText = delta.changeNote ?? delta.label;
+        if (existing != null) {
+          final history = RelationEvolutionPoint.decodeList(
+            existing.evolutionJson,
+          );
+          final alreadyLogged = history.any(
+            (e) =>
+                e.chapterLabel == chapter.title && e.state == noteText,
+          );
+          final nextHistory = alreadyLogged
+              ? history
+              : [
+                  ...history,
+                  RelationEvolutionPoint(
+                    chapterLabel: chapter.title,
+                    state: noteText,
+                  ),
+                ];
+          final updated = CharacterRelationsCompanion(
+            id: Value(existing.id),
+            novelId: Value(novelId),
+            sourceCharacterId: Value(existing.sourceCharacterId),
+            targetCharacterId: Value(existing.targetCharacterId),
+            relationType: Value(delta.relationType),
+            label: Value(delta.label),
+            description: Value(
+              existing.description.isEmpty ? noteText : existing.description,
+            ),
+            strength: Value(delta.strength),
+            line: Value(delta.line),
+            status: Value(existing.status),
+            evolutionJson: Value(
+              RelationEvolutionPoint.encodeList(nextHistory),
+            ),
+            firstChapterOrder: Value(existing.firstChapterOrder ?? chapterOrder),
+            lastChapterOrder: Value(chapterOrder ?? existing.lastChapterOrder),
+            updatedAt: Value(now),
+          );
+          await db.upsertCharacterRelation(updated);
+          updatedRelations++;
+        } else {
+          final id = _uuid.v4();
+          final initHistory = [
+            RelationEvolutionPoint(
+              chapterLabel: chapter.title,
+              state: noteText,
+            ),
+          ];
+          await db.upsertCharacterRelation(
+            CharacterRelationsCompanion.insert(
+              id: id,
+              novelId: novelId,
+              sourceCharacterId: fromChar.id,
+              targetCharacterId: toChar.id,
+              relationType: Value(delta.relationType),
+              label: delta.label,
+              description: Value(noteText),
+              strength: Value(delta.strength),
+              line: Value(delta.line),
+              evolutionJson: Value(
+                RelationEvolutionPoint.encodeList(initHistory),
+              ),
+              firstChapterOrder: Value(chapterOrder),
+              lastChapterOrder: Value(chapterOrder),
+              updatedAt: now,
+            ),
+          );
+          updatedRelations++;
+        }
+      }
+    }
+
+    // 5) 写入本章时间线事件（同章同标题去重）
+    var addedTimelineEvents = 0;
+    if (extraction.timelineEvents.isNotEmpty) {
+      final now = DateTime.now();
+      final existingEvents = await db.getTimelineEvents(novelId);
+      final sameChapterTitles = existingEvents
+          .where((e) => e.chapterId == chapter.id)
+          .map((e) => e.title.trim().toLowerCase())
+          .toSet();
+      var nextSort = existingEvents.isEmpty
+          ? 0
+          : existingEvents
+                    .map((e) => e.sortOrder)
+                    .reduce((a, b) => a > b ? a : b) +
+                1;
+
+      for (var i = 0; i < extraction.timelineEvents.length; i++) {
+        if (selectedTimelineEventIndices != null &&
+            !selectedTimelineEventIndices.contains(i)) {
+          continue;
+        }
+        final ev = extraction.timelineEvents[i];
+        final normTitle = ev.title.trim().toLowerCase();
+        if (normTitle.isEmpty || sameChapterTitles.contains(normTitle)) {
+          continue;
+        }
+        await db.upsertTimelineEvent(
+          TimelineEventsCompanion.insert(
+            id: _uuid.v4(),
+            novelId: novelId,
+            volumeId: Value(chapter.volumeId),
+            chapterId: Value(chapter.id),
+            chapterOrder: Value(chapterOrder ?? chapter.sortOrder),
+            inWorldTime: Value(ev.inWorldTime),
+            title: ev.title,
+            summary: Value(ev.summary),
+            location: Value(ev.location),
+            participantsJson: Value(encodeStringList(ev.participants)),
+            importance: Value(ev.importance),
+            sortOrder: Value(nextSort++),
+            createdAt: now,
+          ),
+        );
+        sameChapterTitles.add(normTitle);
+        addedTimelineEvents++;
+      }
+    }
+
+    if (updatedChars > 0 ||
+        createdChars > 0 ||
+        createdWorlds > 0 ||
+        updatedRelations > 0 ||
+        addedTimelineEvents > 0) {
       await repo.touchNovel(novelId);
     }
 
@@ -445,6 +725,8 @@ abstract final class ChapterLedgerApplier {
       createdWorldEntries: createdWorlds,
       createdForeshadowings: createdFsCount,
       flaggedResolvedForeshadowings: resolvedFsCount,
+      updatedRelations: updatedRelations,
+      addedTimelineEvents: addedTimelineEvents,
     );
   }
 }

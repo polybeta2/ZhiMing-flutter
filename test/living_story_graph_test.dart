@@ -7,6 +7,7 @@ import 'package:zhiming/core/database/app_database.dart';
 import 'package:zhiming/core/database/novel_repository.dart';
 import 'package:zhiming/core/storage/blob_store.dart';
 import 'package:zhiming/domain/models/source_profile_models.dart';
+import 'package:zhiming/domain/writing/chapter_ledger.dart';
 import 'package:zhiming/features/source_archive/source_injection_helper.dart';
 
 void main() {
@@ -184,6 +185,119 @@ void main() {
       expect(bundle.foreshadowings.single.status, 'resolved');
       expect(bundle.foreshadowings.single.resolvedChapterOrder, 2);
       expect(bundle.worldEntries.single.keywordsJson, contains('星光之城'));
+    });
+  });
+
+  group('ChapterLedger relation & timeline incremental writeback', () {
+    test('parses and applies relationship_deltas (appending evolution) and timeline_events', () async {
+      final db = AppDatabase(NativeDatabase.memory());
+      addTearDown(db.close);
+      final repo = NovelRepository(db);
+      final now = DateTime(2026, 11, 21);
+
+      await db.upsertNovel(
+        NovelsCompanion.insert(
+          id: 'n1',
+          title: '测试',
+          createdAt: now,
+          updatedAt: now,
+        ),
+      );
+      await db.upsertVolume(
+        VolumesCompanion.insert(
+          id: 'v1',
+          novelId: 'n1',
+          name: '第一卷',
+          sortOrder: 1,
+        ),
+      );
+      await db.upsertChapter(
+        ChaptersCompanion.insert(
+          id: 'ch-249',
+          volumeId: 'v1',
+          title: '第249章 不要跟女人比心机',
+          sortOrder: 249,
+          updatedAt: now,
+        ),
+      );
+      final chapter = (await db.getChapter('ch-249'))!;
+      await db.upsertCharacter(
+        CharactersCompanion.insert(id: 'c1', novelId: 'n1', name: '莫烬'),
+      );
+      await db.upsertCharacter(
+        CharactersCompanion.insert(id: 'c2', novelId: 'n1', name: '月莲'),
+      );
+      await db.upsertCharacterRelation(
+        CharacterRelationsCompanion.insert(
+          id: 'r1',
+          novelId: 'n1',
+          sourceCharacterId: 'c1',
+          targetCharacterId: 'c2',
+          relationType: const Value('盟友'),
+          label: '短暂同行',
+          evolutionJson: const Value(
+            '[{"chapterLabel":"第92章","state":"初遇合作"}]',
+          ),
+          updatedAt: now,
+        ),
+      );
+
+      const llmJson = '''
+{
+  "summary": "莫烬三发炼金子弹击落3号载体并接住力竭的月莲。",
+  "key_facts": ["3号载体被击杀"],
+  "new_foreshadowings": [],
+  "resolved_foreshadowing_titles": [],
+  "character_deltas": [],
+  "new_characters": [],
+  "new_world_entries": [],
+  "relationship_deltas": [
+    {
+      "from": "莫烬",
+      "to": "月莲",
+      "relation_type": "盟友",
+      "label": "生死并肩",
+      "strength": 5,
+      "line": "明线",
+      "change_note": "莫烬赶到战场救下力竭的月莲"
+    }
+  ],
+  "timeline_events": [
+    {
+      "in_world_time": "血月战后",
+      "title": "击杀3号载体",
+      "summary": "莫烬与月莲联手斩杀3号载体",
+      "location": "群星之城外",
+      "participants": ["莫烬", "月莲"],
+      "importance": "major"
+    }
+  ]
+}
+''';
+      final extraction = ChapterLedgerExtraction.tryParse(llmJson)!;
+      expect(extraction.relationshipDeltas.length, 1);
+      expect(extraction.timelineEvents.length, 1);
+
+      final report = await ChapterLedgerApplier.applyToDb(
+        db: db,
+        repo: repo,
+        novelId: 'n1',
+        chapter: chapter,
+        chapterOrder: 249,
+        extraction: extraction,
+      );
+      expect(report.updatedRelations, 1);
+      expect(report.addedTimelineEvents, 1);
+
+      final rels = await db.getCharacterRelations('n1');
+      expect(rels.single.label, '生死并肩');
+      expect(rels.single.strength, 5);
+      expect(rels.single.evolutionJson, contains('初遇合作'));
+      expect(rels.single.evolutionJson, contains('第249章'));
+
+      final events = await db.getTimelineEvents('n1');
+      expect(events.single.title, '击杀3号载体');
+      expect(events.single.chapterOrder, 249);
     });
   });
 }
