@@ -5,6 +5,7 @@ import 'package:zhiming/domain/models/source_profile_models.dart';
 import 'package:zhiming/domain/source/novel_local_indexer.dart';
 import 'package:zhiming/domain/source/source_batch_helper.dart';
 import 'package:zhiming/domain/source/source_graph_aggregator.dart';
+import 'package:zhiming/domain/source/source_graph_reducer.dart';
 import 'package:zhiming/domain/source/source_micro_summarizer.dart';
 import 'package:zhiming/domain/source/source_scan_chunker.dart';
 
@@ -297,6 +298,81 @@ void main() {
       );
       expect(pairs.length, 1);
       expect(pairs.values.single.length, 2);
+    });
+  });
+
+  group('SourceGraphReducer 4-pass parsers & builders', () {
+    test('parses Pass 1 canon entity resolution and builds aliasMap', () {
+      const raw = '''
+{
+  "camps": [{"name": "群星之城", "stance": "中立", "brief": "庇护所"}],
+  "characters": [
+    {"name": "罗娜", "aliases": ["小黑猫", "群星城主"], "role": "核心配角", "camp": "群星之城", "stance": "主角方", "importance": "major"},
+    {"name": "莫烬", "aliases": ["末路灰烬"], "role": "主角", "camp": "独立", "stance": "主角方", "importance": "major"}
+  ],
+  "not_characters": ["路人甲", "无头战友"]
+}
+''';
+      final res = SourceGraphReducer.parsePass1Canon(raw);
+      expect(res.camps.single.name, '群星之城');
+      expect(res.aliasMap['小黑猫'], '罗娜');
+      expect(res.aliasMap['末路灰烬'], '莫烬');
+      expect(res.dropNames, containsAll(['路人甲', '无头战友']));
+    });
+
+    test('parses Pass 3 relations and Pass 4 reconciled clues & timeline', () {
+      const relRaw = '''
+{
+  "relations": [
+    {
+      "from": "莫烬",
+      "to": "罗娜",
+      "relationType": "盟友",
+      "label": "托付群星之城",
+      "description": "罗娜力竭变回黑猫前将城主权柄托付",
+      "strength": 4,
+      "line": "暗线",
+      "firstChapter": 50,
+      "lastChapter": 250,
+      "evolution": [{"chapterLabel": "第248章", "state": "舍弃力量化为小黑猫"}]
+    }
+  ]
+}
+''';
+      final rels = SourceGraphReducer.parsePass3Relations(relRaw);
+      expect(rels.single.from, '莫烬');
+      expect(rels.single.line, '暗线');
+      expect(rels.single.lastChapter, 250);
+
+      const clueRaw = '''
+{
+  "threads": [
+    {
+      "title": "罗娜的铃铛权柄",
+      "detail": "第1章起提及的铃铛实为群星之城权柄载体",
+      "status": "resolved",
+      "plantedChapter": 1,
+      "resolvedChapter": 248,
+      "involvedCharacters": ["罗娜", "月莲"],
+      "relatedEventSummary": "罗娜交出铃铛",
+      "payoffDetail": "第248章移交月莲"
+    },
+    {
+      "title": "主的真实意图",
+      "detail": "3号载体临死宣称主的力量必须归还",
+      "status": "open",
+      "plantedChapter": 249,
+      "involvedCharacters": ["月莲", "莫烬"]
+    }
+  ]
+}
+''';
+      final clues = SourceGraphReducer.parsePass4Clues(clueRaw);
+      expect(clues.length, 2);
+      expect(clues[0].status, 'resolved');
+      expect(clues[0].resolvedChapter, 248);
+      expect(clues[1].status, 'open');
+      expect(clues[1].plantedChapter, 249);
     });
   });
 }
