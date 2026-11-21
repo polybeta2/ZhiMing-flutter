@@ -207,11 +207,13 @@ class SourceAndStyleBridge {
       final rawSource = sourceText;
       final origVolumeOutline = _buildOriginalVolumeOutline(profile);
       final chapterAnchors = _buildChapterOutlineAnchors(profile, upTo);
+      final origChapterIdByOrder = <int, String>{};
+      String? origVolId;
 
       if (upTo != null && rawSource != null && rawSource.isNotEmpty) {
         final chapters = StyleChapterSampler.split(rawSource).take(upTo).toList();
         final actualOrigCount = chapters.length;
-        final origVolId = uuid.v4();
+        origVolId = uuid.v4();
         await db.upsertVolume(
           VolumesCompanion.insert(
             id: origVolId,
@@ -223,6 +225,7 @@ class SourceAndStyleBridge {
         );
         var order = 1;
         for (final ch in chapters) {
+          final chId = uuid.v4();
           final chTitle = ch.marker.trim().isNotEmpty
               ? ch.marker.trim()
               : '第$order章';
@@ -232,9 +235,10 @@ class SourceAndStyleBridge {
             if (order == actualOrigCount && profile.activeArcs.isNotEmpty)
               '【断更处正在推进的主线】\n${profile.activeArcs.map((a) => '- $a').join('\n')}',
           ];
+          origChapterIdByOrder[order] = chId;
           await db.upsertChapter(
             ChaptersCompanion.insert(
-              id: uuid.v4(),
+              id: chId,
               volumeId: origVolId,
               title: chTitle,
               detailedOutline: Value(
@@ -263,8 +267,13 @@ class SourceAndStyleBridge {
         ),
       );
 
+      // 1. 全量写入角色卡（保留 camp / role / arcJson），建立 名称/别名 -> characterId 映射
+      final nameToCharId = <String, String>{};
+      String normKey(String s) => s.replaceAll(RegExp(r'\s+'), '').toLowerCase();
+
       for (var i = 0; i < profile.characters.length; i++) {
         final c = profile.characters[i];
+        final charId = uuid.v4();
         final bg = [
           if (c.oneLine != null && c.oneLine!.isNotEmpty) c.oneLine!,
           if (c.abilities != null && c.abilities!.isNotEmpty)
@@ -278,9 +287,11 @@ class SourceAndStyleBridge {
           if (c.voiceSamples.isNotEmpty)
             '口癖示例：${c.voiceSamples.take(2).map((s) => '「$s」').join(' ')}',
         ].join('\n');
+        final isActive =
+            c.importance == CanonImportance.major || i < 12;
         await db.upsertCharacter(
           CharactersCompanion.insert(
-            id: uuid.v4(),
+            id: charId,
             novelId: novelId,
             name: c.name,
             aliasesJson: Value(jsonEncode(c.aliases)),
@@ -288,15 +299,82 @@ class SourceAndStyleBridge {
             personality: Value(personality),
             background: Value(bg),
             physicalState: Value(c.currentState ?? ''),
-            isSceneRelevant: Value(i < 12),
+            camp: Value(c.camp),
+            role: Value(c.role),
+            arcJson: Value(
+              jsonEncode([for (final a in c.arc) a.toJson()]),
+            ),
+            isSceneRelevant: Value(isActive),
             sortOrder: Value(i),
           ),
         );
+        nameToCharId[normKey(c.name)] = charId;
+        for (final a in c.aliases) {
+          final k = normKey(a);
+          if (k.isNotEmpty) nameToCharId.putIfAbsent(k, () => charId);
+        }
       }
 
+      // 2. 无损写入结构化人物关系边（优先 profile.relations，兜底兼容旧 character.relationships）
+      final insertedRelPairs = <String>{};
+      for (final edge in profile.relations) {
+        final srcId = nameToCharId[normKey(edge.from)];
+        final dstId = nameToCharId[normKey(edge.to)];
+        if (srcId == null || dstId == null || srcId == dstId) continue;
+        final pairKey = srcId.compareTo(dstId) <= 0
+            ? '$srcId||$dstId'
+            : '$dstId||$srcId';
+        if (!insertedRelPairs.add(pairKey)) continue;
+        await db.upsertCharacterRelation(
+          CharacterRelationsCompanion.insert(
+            id: uuid.v4(),
+            novelId: novelId,
+            sourceCharacterId: srcId,
+            targetCharacterId: dstId,
+            relationType: Value(edge.relationType),
+            label: edge.label.isNotEmpty ? edge.label : edge.relationType,
+            description: Value(edge.description),
+            strength: Value(edge.strength.clamp(1, 5)),
+            line: Value(edge.line),
+            evolutionJson: Value(
+              jsonEncode([for (final e in edge.evolution) e.toJson()]),
+            ),
+            firstChapterOrder: Value(edge.firstChapter),
+            lastChapterOrder: Value(edge.lastChapter),
+            updatedAt: now,
+          ),
+        );
+      }
+      for (final c in profile.characters) {
+        final srcId = nameToCharId[normKey(c.name)];
+        if (srcId == null) continue;
+        for (final rel in c.relationships) {
+          final dstId = nameToCharId[normKey(rel.target)];
+          if (dstId == null || srcId == dstId) continue;
+          final pairKey = srcId.compareTo(dstId) <= 0
+              ? '$srcId||$dstId'
+              : '$dstId||$srcId';
+          if (!insertedRelPairs.add(pairKey)) continue;
+          await db.upsertCharacterRelation(
+            CharacterRelationsCompanion.insert(
+              id: uuid.v4(),
+              novelId: novelId,
+              sourceCharacterId: srcId,
+              targetCharacterId: dstId,
+              relationType: Value(normalizeRelationType(rel.relation)),
+              label: rel.relation.isNotEmpty ? rel.relation : '关联',
+              updatedAt: now,
+            ),
+          );
+        }
+      }
+
+      // 3. 写入世界观条目（优先使用精扫产出的 Lorebook keywords）
       for (var i = 0; i < profile.worldbuilding.length; i++) {
         final w = profile.worldbuilding[i];
-        final keywords = _extractWorldKeywords(w.name);
+        final keywords = w.keywords.isNotEmpty
+            ? w.keywords
+            : _extractWorldKeywords(w.name);
         await db.upsertWorldEntry(
           WorldEntriesCompanion.insert(
             id: uuid.v4(),
@@ -311,16 +389,61 @@ class SourceAndStyleBridge {
         );
       }
 
+      // 4. 无损写入伏笔台账（含 status / resolvedChapterOrder / involvedCharactersJson / payoffDetail）
+      final clueTitleToId = <String, String>{};
       for (final t in profile.openThreads) {
+        final fsId = uuid.v4();
         await db.upsertForeshadowing(
           ForeshadowingsCompanion.insert(
-            id: uuid.v4(),
+            id: fsId,
             novelId: novelId,
             title: t.title,
             detail: Value(t.detail),
             plantedVolumeIndex: Value(t.plantedChapter != null ? 1 : null),
             plantedChapterOrder: Value(t.plantedChapter),
-            status: const Value('open'),
+            status: Value(t.status),
+            involvedCharactersJson: Value(jsonEncode(t.involvedCharacters)),
+            resolvedChapterOrder: Value(t.resolvedChapter),
+            payoffDetail: Value(t.payoffDetail),
+            createdAt: now,
+          ),
+        );
+        clueTitleToId[normKey(t.title)] = fsId;
+      }
+
+      // 5. 无损写入故事时间线表（自动关联原作章 ID 与伏笔 ID）
+      final numRe = RegExp(r'\d+');
+      for (var i = 0; i < profile.timeline.length; i++) {
+        final ev = profile.timeline[i];
+        final chNo =
+            ev.chapterStart ??
+            int.tryParse(numRe.firstMatch(ev.chapterRange ?? '')?.group(0) ?? '');
+        final linkedChapterId =
+            chNo != null ? origChapterIdByOrder[chNo] : null;
+        final linkedFsIds = <String>[
+          for (final title in ev.linkedClueTitles)
+            if (clueTitleToId[normKey(title)] != null)
+              clueTitleToId[normKey(title)]!,
+        ];
+        final shortTitle = ev.summary.length <= 22
+            ? ev.summary
+            : '${ev.summary.substring(0, 21)}…';
+        await db.upsertTimelineEvent(
+          TimelineEventsCompanion.insert(
+            id: uuid.v4(),
+            novelId: novelId,
+            volumeId: Value(linkedChapterId != null ? origVolId : null),
+            chapterId: Value(linkedChapterId),
+            chapterOrder: Value(chNo),
+            chapterRange: Value(ev.chapterRange),
+            inWorldTime: Value(ev.inWorldTime),
+            phase: Value(ev.phase),
+            title: shortTitle,
+            summary: Value(ev.summary),
+            participantsJson: Value(jsonEncode(ev.participants)),
+            linkedForeshadowingIdsJson: Value(jsonEncode(linkedFsIds)),
+            importance: Value(ev.importance.raw),
+            sortOrder: Value(i),
             createdAt: now,
           ),
         );

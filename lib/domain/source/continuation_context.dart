@@ -61,12 +61,33 @@ class ContinuationContext {
       }).toList(),
     );
 
+    if (profile.relations.isNotEmpty) {
+      final sortedRels = [...profile.relations]
+        ..sort((a, b) {
+          final darkA = a.line == '暗线' ? 1 : 0;
+          final darkB = b.line == '暗线' ? 1 : 0;
+          final cmp = (b.strength + darkB * 2).compareTo(a.strength + darkA * 2);
+          return cmp != 0 ? cmp : a.from.compareTo(b.from);
+        });
+      appendBlock(
+        '核心人物关系网',
+        sortedRels.take(12).map((r) {
+          final desc = r.description.isNotEmpty ? '（${r.description}）' : '';
+          return '${r.from} ↔ ${r.to}［${r.relationType}·${r.line}·强度${r.strength}］：${r.label}$desc';
+        }).toList(),
+      );
+    }
+
     appendBlock(
       '未回收伏笔',
-      profile.openThreads.map((t) {
-        final ch = t.plantedChapter != null ? '[第${t.plantedChapter}章]' : '';
-        return '$ch${t.title}：${t.detail}';
-      }).toList(),
+      profile.openThreads
+          .where((t) => t.status != 'resolved')
+          .map((t) {
+            final ch = t.plantedChapter != null ? '[第${t.plantedChapter}章]' : '';
+            final tag = t.status == 'partial' ? '[部分推进]' : '';
+            return '$ch$tag${t.title}：${t.detail}';
+          })
+          .toList(),
     );
 
     appendBlock('进行中剧情弧', profile.activeArcs);
