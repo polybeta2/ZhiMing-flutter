@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:zhiming/domain/models/source_profile_models.dart';
+import 'package:zhiming/domain/source/novel_local_indexer.dart';
 import 'package:zhiming/domain/source/source_batch_helper.dart';
 import 'package:zhiming/domain/source/source_micro_summarizer.dart';
 import 'package:zhiming/domain/source/source_scan_chunker.dart';
@@ -174,6 +175,27 @@ void main() {
       final merged = SourceBatchHelper.parseBatchOutput(raw);
       expect(merged[0]!.characters.length, 2);
       expect(merged[0]!.events.length, 2);
+    });
+  });
+
+  group('NovelLocalIndexer noise filtering', () {
+    test('strips protagonist+adverb glued noise and action verbs', () {
+      const chapter = '''
+第1章 测试
+莫烬说道：“走吧。”莫烬问道：“谁在那里？”莫烬笑道：“有意思。”
+莫烬急忙说道：“快躲开！”莫烬急忙转身。莫烬急忙开口。
+莫烬继续说道：“接着聊。”莫烬继续看着前方。莫烬继续沉默。
+转过头来问道：“你是谁？”转过头来看向门口。转过头来皱眉。
+开口说道：“别吵。”开口问道：“懂了吗？”开口笑道：“行。”
+佩洛冷笑道：“蠢货。”佩洛问道：“准备好了吗？”佩洛转身离开。
+''';
+      final indexer = NovelLocalIndexer.fromRawText(chapter);
+      final names = indexer.topEntities.map((e) => e.name).toList();
+      expect(names, containsAll(['莫烬', '佩洛']));
+      expect(names, isNot(contains('莫烬急忙')));
+      expect(names, isNot(contains('莫烬继续')));
+      expect(names, isNot(contains('转过头来')));
+      expect(names, isNot(contains('开口')));
     });
   });
 }

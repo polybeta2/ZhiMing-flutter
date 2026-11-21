@@ -112,6 +112,17 @@ class NovelLocalIndexer {
     '一只', '两只', '一群', '一阵', '一道', '一片', '一股', '一团', '一抹', '一丝',
     '忽然', '瞬间', '刹那', '猛然', '蓦然', '连忙', '赶紧', '急忙',
     '狼人', '灾祸', '守夜', '城主', '大人', '老板', '大叔', '大爷', '阿姨', '姑娘',
+    '开口', '转头', '转过头来', '回头', '抬头', '低头', '点头', '摇头', '默默',
+    '眯着眼睛', '眯起眼睛', '眨了眨眼', '深吸', '冷哼', '轻叹', '叹气', '沉默',
+    '闭嘴', '咬牙', '皱眉', '低声', '轻笑', '冷笑', '苦笑', '淡笑', '转身',
+  };
+
+  /// 高频真名后常粘连的副词/动词后缀（如「莫烬急忙」「莫烬继续」）
+  static const Set<String> _trailingModifiers = {
+    '急忙', '继续', '再次', '连忙', '赶紧', '微微', '轻轻', '缓缓', '冷冷',
+    '顿时', '随即', '立刻', '直接', '突然', '慢慢', '悄悄', '猛地', '默默',
+    '一愣', '一笑', '一叹', '转身', '抬头', '低头', '开口', '忙', '又', '再',
+    '却', '便', '就', '也', '还',
   };
 
   /// 从原始全文构建本地索引（零外部依赖，适合在 Isolate.run 中运行）
@@ -177,6 +188,31 @@ class NovelLocalIndexer {
       }
     }
 
+    // 1.5 剥离「高频真名 + 副词/动词」粘连脏词（如 莫烬急忙/莫烬继续 → 归并到 莫烬）
+    final strongBaseNames = speakerHits.entries
+        .where((e) => e.key.length >= 2 && e.key.length <= 3 && e.value >= 2)
+        .map((e) => e.key)
+        .toList()
+      ..sort((a, b) => b.length.compareTo(a.length));
+    final toRemove = <String>[];
+    for (final entry in speakerHits.entries.toList()) {
+      final word = entry.key;
+      if (word.length < 3) continue;
+      for (final base in strongBaseNames) {
+        if (word.length > base.length && word.startsWith(base)) {
+          final suffix = word.substring(base.length);
+          if (_trailingModifiers.contains(suffix)) {
+            speakerHits[base] = (speakerHits[base] ?? 0) + entry.value;
+            toRemove.add(word);
+            break;
+          }
+        }
+      }
+    }
+    for (final k in toRemove) {
+      speakerHits.remove(k);
+    }
+
     // 取候选 Top 45，再在全书做精确出现统计（过滤掉出现次数太少的偶发词）
     final candidates = speakerHits.entries.toList()
       ..sort((a, b) => b.value.compareTo(a.value));
@@ -232,7 +268,7 @@ class NovelLocalIndexer {
       final scoreB = b.mentions + b.recentChapterHits * 15;
       return scoreB.compareTo(scoreA);
     });
-    final topEntities = stats.take(20).toList();
+    final topEntities = stats.take(25).toList();
 
     // 3. Top 10 实体同章共现矩阵
     final coNames = topEntities.take(10).map((e) => e.name).toList();
