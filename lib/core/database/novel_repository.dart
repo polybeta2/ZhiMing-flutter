@@ -43,12 +43,16 @@ class NovelRepository {
     final chars = await db.getCharacters(novelId);
     final worlds = await db.getWorldEntries(novelId);
     final fs = await db.getForeshadowings(novelId);
+    final rels = await db.getCharacterRelations(novelId);
+    final timeline = await db.getTimelineEvents(novelId);
     return NovelBundle(
       novel: novel,
       volumes: volBundles,
       characters: chars,
       worldEntries: worlds,
       foreshadowings: fs,
+      relations: rels,
+      timelineEvents: timeline,
     );
   }
 

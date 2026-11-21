@@ -20,6 +20,8 @@ part 'app_database.g.dart';
     ChapterSummaries,
     ChapterSnapshots,
     Characters,
+    CharacterRelations,
+    TimelineEvents,
     WorldEntries,
     Foreshadowings,
     ChatThreads,
@@ -41,7 +43,7 @@ class AppDatabase extends _$AppDatabase {
   AppDatabase([QueryExecutor? executor]) : super(executor ?? _openConnection());
 
   @override
-  int get schemaVersion => 2;
+  int get schemaVersion => 3;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -49,6 +51,16 @@ class AppDatabase extends _$AppDatabase {
       if (from < 2) {
         await m.addColumn(worldEntries, worldEntries.keywordsJson);
         await m.addColumn(worldEntries, worldEntries.isAlwaysOn);
+      }
+      if (from < 3) {
+        await m.createTable(characterRelations);
+        await m.createTable(timelineEvents);
+        await m.addColumn(characters, characters.camp);
+        await m.addColumn(characters, characters.role);
+        await m.addColumn(characters, characters.arcJson);
+        await m.addColumn(foreshadowings, foreshadowings.involvedCharactersJson);
+        await m.addColumn(foreshadowings, foreshadowings.resolvedChapterOrder);
+        await m.addColumn(foreshadowings, foreshadowings.payoffDetail);
       }
     },
     beforeOpen: (details) async {
@@ -266,6 +278,66 @@ class AppDatabase extends _$AppDatabase {
 
   Future<void> deleteForeshadowing(String id) {
     return (delete(foreshadowings)..where((t) => t.id.equals(id))).go();
+  }
+
+  // ---- Character Relations & Timeline Events (Schema v3) ----
+
+  Stream<List<CharacterRelation>> watchCharacterRelations(String novelId) {
+    return (select(characterRelations)
+          ..where((t) => t.novelId.equals(novelId))
+          ..orderBy([
+            (t) => OrderingTerm.desc(t.strength),
+            (t) => OrderingTerm.asc(t.id),
+          ]))
+        .watch();
+  }
+
+  Future<List<CharacterRelation>> getCharacterRelations(String novelId) {
+    return (select(characterRelations)
+          ..where((t) => t.novelId.equals(novelId))
+          ..orderBy([
+            (t) => OrderingTerm.desc(t.strength),
+            (t) => OrderingTerm.asc(t.id),
+          ]))
+        .get();
+  }
+
+  Future<void> upsertCharacterRelation(CharacterRelationsCompanion data) {
+    return into(characterRelations).insertOnConflictUpdate(data);
+  }
+
+  Future<void> deleteCharacterRelation(String id) {
+    return (delete(characterRelations)..where((t) => t.id.equals(id))).go();
+  }
+
+  Stream<List<TimelineEvent>> watchTimelineEvents(String novelId) {
+    return (select(timelineEvents)
+          ..where((t) => t.novelId.equals(novelId))
+          ..orderBy([
+            (t) => OrderingTerm.asc(t.chapterOrder),
+            (t) => OrderingTerm.asc(t.sortOrder),
+            (t) => OrderingTerm.asc(t.createdAt),
+          ]))
+        .watch();
+  }
+
+  Future<List<TimelineEvent>> getTimelineEvents(String novelId) {
+    return (select(timelineEvents)
+          ..where((t) => t.novelId.equals(novelId))
+          ..orderBy([
+            (t) => OrderingTerm.asc(t.chapterOrder),
+            (t) => OrderingTerm.asc(t.sortOrder),
+            (t) => OrderingTerm.asc(t.createdAt),
+          ]))
+        .get();
+  }
+
+  Future<void> upsertTimelineEvent(TimelineEventsCompanion data) {
+    return into(timelineEvents).insertOnConflictUpdate(data);
+  }
+
+  Future<void> deleteTimelineEvent(String id) {
+    return (delete(timelineEvents)..where((t) => t.id.equals(id))).go();
   }
 
   // ---- Chat Threads & Messages ----

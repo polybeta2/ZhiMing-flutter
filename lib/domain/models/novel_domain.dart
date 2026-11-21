@@ -226,6 +226,88 @@ class VolumeBundle {
   InfoGap? get infoGap => InfoGap.decode(volume.infoGapJson);
 }
 
+class RelationEvolutionPoint {
+  const RelationEvolutionPoint({
+    required this.chapterLabel,
+    required this.state,
+  });
+
+  final String chapterLabel;
+  final String state;
+
+  Map<String, dynamic> toJson() => {
+    'chapterLabel': chapterLabel,
+    'state': state,
+  };
+
+  factory RelationEvolutionPoint.fromJson(dynamic raw) {
+    if (raw is Map) {
+      return RelationEvolutionPoint(
+        chapterLabel:
+            (raw['chapterLabel'] ?? raw['chapter_label'] ?? raw['chapter'])
+                ?.toString()
+                .trim() ??
+            '',
+        state: (raw['state'] ?? raw['desc'])?.toString().trim() ?? '',
+      );
+    }
+    return RelationEvolutionPoint(chapterLabel: '', state: raw.toString().trim());
+  }
+
+  static List<RelationEvolutionPoint> decodeList(String? jsonStr) {
+    if (jsonStr == null || jsonStr.trim().isEmpty) return const [];
+    try {
+      final raw = jsonDecode(jsonStr);
+      if (raw is List) {
+        return raw
+            .map(RelationEvolutionPoint.fromJson)
+            .where((e) => e.state.isNotEmpty)
+            .toList();
+      }
+    } catch (_) {}
+    return const [];
+  }
+
+  static String encodeList(List<RelationEvolutionPoint> list) =>
+      jsonEncode([for (final e in list) e.toJson()]);
+}
+
+class CharacterArcPoint {
+  const CharacterArcPoint({required this.phase, required this.state});
+
+  final String phase;
+  final String state;
+
+  Map<String, dynamic> toJson() => {'phase': phase, 'state': state};
+
+  factory CharacterArcPoint.fromJson(dynamic raw) {
+    if (raw is Map) {
+      return CharacterArcPoint(
+        phase: raw['phase']?.toString().trim() ?? '',
+        state: raw['state']?.toString().trim() ?? '',
+      );
+    }
+    return CharacterArcPoint(phase: '', state: raw.toString().trim());
+  }
+
+  static List<CharacterArcPoint> decodeList(String? jsonStr) {
+    if (jsonStr == null || jsonStr.trim().isEmpty) return const [];
+    try {
+      final raw = jsonDecode(jsonStr);
+      if (raw is List) {
+        return raw
+            .map(CharacterArcPoint.fromJson)
+            .where((e) => e.phase.isNotEmpty || e.state.isNotEmpty)
+            .toList();
+      }
+    } catch (_) {}
+    return const [];
+  }
+
+  static String encodeList(List<CharacterArcPoint> list) =>
+      jsonEncode([for (final e in list) e.toJson()]);
+}
+
 class NovelBundle {
   const NovelBundle({
     required this.novel,
@@ -233,6 +315,8 @@ class NovelBundle {
     required this.characters,
     required this.worldEntries,
     required this.foreshadowings,
+    this.relations = const [],
+    this.timelineEvents = const [],
   });
 
   final db.Novel novel;
@@ -240,6 +324,8 @@ class NovelBundle {
   final List<db.Character> characters;
   final List<db.WorldEntry> worldEntries;
   final List<db.Foreshadowing> foreshadowings;
+  final List<db.CharacterRelation> relations;
+  final List<db.TimelineEvent> timelineEvents;
 
   List<ChapterBundle> get allChaptersInOrder => [
     for (final v in volumes) ...v.chapters,

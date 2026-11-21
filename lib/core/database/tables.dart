@@ -92,9 +92,60 @@ class Characters extends Table {
   TextColumn get physicalState => text().nullable()();
   TextColumn get mentalState => text().nullable()();
   TextColumn get lastSeenChapterTitle => text().nullable()();
+  TextColumn get camp => text().nullable()();
+  TextColumn get role => text().nullable()();
+  TextColumn get arcJson => text().withDefault(const Constant('[]'))();
   BoolColumn get isSceneRelevant =>
       boolean().withDefault(const Constant(true))();
   IntColumn get sortOrder => integer().withDefault(const Constant(0))();
+
+  @override
+  Set<Column<Object>> get primaryKey => {id};
+}
+
+class CharacterRelations extends Table {
+  TextColumn get id => text()();
+  TextColumn get novelId =>
+      text().references(Novels, #id, onDelete: KeyAction.cascade)();
+  TextColumn get sourceCharacterId =>
+      text().references(Characters, #id, onDelete: KeyAction.cascade)();
+  TextColumn get targetCharacterId =>
+      text().references(Characters, #id, onDelete: KeyAction.cascade)();
+  TextColumn get relationType => text().withDefault(const Constant('未知'))();
+  TextColumn get label => text()();
+  TextColumn get description => text().withDefault(const Constant(''))();
+  IntColumn get strength => integer().withDefault(const Constant(3))();
+  TextColumn get line => text().withDefault(const Constant('明线'))();
+  TextColumn get status => text().withDefault(const Constant('active'))();
+  TextColumn get evolutionJson => text().withDefault(const Constant('[]'))();
+  IntColumn get firstChapterOrder => integer().nullable()();
+  IntColumn get lastChapterOrder => integer().nullable()();
+  DateTimeColumn get updatedAt => dateTime()();
+
+  @override
+  Set<Column<Object>> get primaryKey => {id};
+}
+
+class TimelineEvents extends Table {
+  TextColumn get id => text()();
+  TextColumn get novelId =>
+      text().references(Novels, #id, onDelete: KeyAction.cascade)();
+  TextColumn get volumeId => text().nullable()();
+  TextColumn get chapterId => text().nullable()();
+  IntColumn get chapterOrder => integer().nullable()();
+  TextColumn get chapterRange => text().nullable()();
+  TextColumn get inWorldTime => text().nullable()();
+  TextColumn get phase => text().nullable()();
+  TextColumn get title => text()();
+  TextColumn get summary => text().withDefault(const Constant(''))();
+  TextColumn get location => text().nullable()();
+  TextColumn get participantsJson =>
+      text().withDefault(const Constant('[]'))();
+  TextColumn get linkedForeshadowingIdsJson =>
+      text().withDefault(const Constant('[]'))();
+  TextColumn get importance => text().withDefault(const Constant('normal'))();
+  IntColumn get sortOrder => integer().withDefault(const Constant(0))();
+  DateTimeColumn get createdAt => dateTime()();
 
   @override
   Set<Column<Object>> get primaryKey => {id};
@@ -126,6 +177,10 @@ class Foreshadowings extends Table {
   TextColumn get plannedResolve => text().nullable()();
   TextColumn get status => text().withDefault(const Constant('open'))();
   TextColumn get note => text().nullable()();
+  TextColumn get involvedCharactersJson =>
+      text().withDefault(const Constant('[]'))();
+  IntColumn get resolvedChapterOrder => integer().nullable()();
+  TextColumn get payoffDetail => text().nullable()();
   BoolColumn get suggestedResolved =>
       boolean().withDefault(const Constant(false))();
   DateTimeColumn get createdAt => dateTime()();

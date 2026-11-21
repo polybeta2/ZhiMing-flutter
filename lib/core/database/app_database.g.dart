@@ -2962,6 +2962,36 @@ class $CharactersTable extends Characters
         type: DriftSqlType.string,
         requiredDuringInsert: false,
       );
+  static const VerificationMeta _campMeta = const VerificationMeta('camp');
+  @override
+  late final GeneratedColumn<String> camp = GeneratedColumn<String>(
+    'camp',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _roleMeta = const VerificationMeta('role');
+  @override
+  late final GeneratedColumn<String> role = GeneratedColumn<String>(
+    'role',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _arcJsonMeta = const VerificationMeta(
+    'arcJson',
+  );
+  @override
+  late final GeneratedColumn<String> arcJson = GeneratedColumn<String>(
+    'arc_json',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+    defaultValue: const Constant('[]'),
+  );
   static const VerificationMeta _isSceneRelevantMeta = const VerificationMeta(
     'isSceneRelevant',
   );
@@ -3003,6 +3033,9 @@ class $CharactersTable extends Characters
     physicalState,
     mentalState,
     lastSeenChapterTitle,
+    camp,
+    role,
+    arcJson,
     isSceneRelevant,
     sortOrder,
   ];
@@ -3114,6 +3147,24 @@ class $CharactersTable extends Characters
         ),
       );
     }
+    if (data.containsKey('camp')) {
+      context.handle(
+        _campMeta,
+        camp.isAcceptableOrUnknown(data['camp']!, _campMeta),
+      );
+    }
+    if (data.containsKey('role')) {
+      context.handle(
+        _roleMeta,
+        role.isAcceptableOrUnknown(data['role']!, _roleMeta),
+      );
+    }
+    if (data.containsKey('arc_json')) {
+      context.handle(
+        _arcJsonMeta,
+        arcJson.isAcceptableOrUnknown(data['arc_json']!, _arcJsonMeta),
+      );
+    }
     if (data.containsKey('is_scene_relevant')) {
       context.handle(
         _isSceneRelevantMeta,
@@ -3186,6 +3237,18 @@ class $CharactersTable extends Characters
         DriftSqlType.string,
         data['${effectivePrefix}last_seen_chapter_title'],
       ),
+      camp: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}camp'],
+      ),
+      role: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}role'],
+      ),
+      arcJson: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}arc_json'],
+      )!,
       isSceneRelevant: attachedDatabase.typeMapping.read(
         DriftSqlType.bool,
         data['${effectivePrefix}is_scene_relevant'],
@@ -3216,6 +3279,9 @@ class Character extends DataClass implements Insertable<Character> {
   final String? physicalState;
   final String? mentalState;
   final String? lastSeenChapterTitle;
+  final String? camp;
+  final String? role;
+  final String arcJson;
   final bool isSceneRelevant;
   final int sortOrder;
   const Character({
@@ -3231,6 +3297,9 @@ class Character extends DataClass implements Insertable<Character> {
     this.physicalState,
     this.mentalState,
     this.lastSeenChapterTitle,
+    this.camp,
+    this.role,
+    required this.arcJson,
     required this.isSceneRelevant,
     required this.sortOrder,
   });
@@ -3265,6 +3334,13 @@ class Character extends DataClass implements Insertable<Character> {
     if (!nullToAbsent || lastSeenChapterTitle != null) {
       map['last_seen_chapter_title'] = Variable<String>(lastSeenChapterTitle);
     }
+    if (!nullToAbsent || camp != null) {
+      map['camp'] = Variable<String>(camp);
+    }
+    if (!nullToAbsent || role != null) {
+      map['role'] = Variable<String>(role);
+    }
+    map['arc_json'] = Variable<String>(arcJson);
     map['is_scene_relevant'] = Variable<bool>(isSceneRelevant);
     map['sort_order'] = Variable<int>(sortOrder);
     return map;
@@ -3300,6 +3376,9 @@ class Character extends DataClass implements Insertable<Character> {
       lastSeenChapterTitle: lastSeenChapterTitle == null && nullToAbsent
           ? const Value.absent()
           : Value(lastSeenChapterTitle),
+      camp: camp == null && nullToAbsent ? const Value.absent() : Value(camp),
+      role: role == null && nullToAbsent ? const Value.absent() : Value(role),
+      arcJson: Value(arcJson),
       isSceneRelevant: Value(isSceneRelevant),
       sortOrder: Value(sortOrder),
     );
@@ -3325,6 +3404,9 @@ class Character extends DataClass implements Insertable<Character> {
       lastSeenChapterTitle: serializer.fromJson<String?>(
         json['lastSeenChapterTitle'],
       ),
+      camp: serializer.fromJson<String?>(json['camp']),
+      role: serializer.fromJson<String?>(json['role']),
+      arcJson: serializer.fromJson<String>(json['arcJson']),
       isSceneRelevant: serializer.fromJson<bool>(json['isSceneRelevant']),
       sortOrder: serializer.fromJson<int>(json['sortOrder']),
     );
@@ -3345,6 +3427,9 @@ class Character extends DataClass implements Insertable<Character> {
       'physicalState': serializer.toJson<String?>(physicalState),
       'mentalState': serializer.toJson<String?>(mentalState),
       'lastSeenChapterTitle': serializer.toJson<String?>(lastSeenChapterTitle),
+      'camp': serializer.toJson<String?>(camp),
+      'role': serializer.toJson<String?>(role),
+      'arcJson': serializer.toJson<String>(arcJson),
       'isSceneRelevant': serializer.toJson<bool>(isSceneRelevant),
       'sortOrder': serializer.toJson<int>(sortOrder),
     };
@@ -3363,6 +3448,9 @@ class Character extends DataClass implements Insertable<Character> {
     Value<String?> physicalState = const Value.absent(),
     Value<String?> mentalState = const Value.absent(),
     Value<String?> lastSeenChapterTitle = const Value.absent(),
+    Value<String?> camp = const Value.absent(),
+    Value<String?> role = const Value.absent(),
+    String? arcJson,
     bool? isSceneRelevant,
     int? sortOrder,
   }) => Character(
@@ -3384,6 +3472,9 @@ class Character extends DataClass implements Insertable<Character> {
     lastSeenChapterTitle: lastSeenChapterTitle.present
         ? lastSeenChapterTitle.value
         : this.lastSeenChapterTitle,
+    camp: camp.present ? camp.value : this.camp,
+    role: role.present ? role.value : this.role,
+    arcJson: arcJson ?? this.arcJson,
     isSceneRelevant: isSceneRelevant ?? this.isSceneRelevant,
     sortOrder: sortOrder ?? this.sortOrder,
   );
@@ -3419,6 +3510,9 @@ class Character extends DataClass implements Insertable<Character> {
       lastSeenChapterTitle: data.lastSeenChapterTitle.present
           ? data.lastSeenChapterTitle.value
           : this.lastSeenChapterTitle,
+      camp: data.camp.present ? data.camp.value : this.camp,
+      role: data.role.present ? data.role.value : this.role,
+      arcJson: data.arcJson.present ? data.arcJson.value : this.arcJson,
       isSceneRelevant: data.isSceneRelevant.present
           ? data.isSceneRelevant.value
           : this.isSceneRelevant,
@@ -3441,6 +3535,9 @@ class Character extends DataClass implements Insertable<Character> {
           ..write('physicalState: $physicalState, ')
           ..write('mentalState: $mentalState, ')
           ..write('lastSeenChapterTitle: $lastSeenChapterTitle, ')
+          ..write('camp: $camp, ')
+          ..write('role: $role, ')
+          ..write('arcJson: $arcJson, ')
           ..write('isSceneRelevant: $isSceneRelevant, ')
           ..write('sortOrder: $sortOrder')
           ..write(')'))
@@ -3461,6 +3558,9 @@ class Character extends DataClass implements Insertable<Character> {
     physicalState,
     mentalState,
     lastSeenChapterTitle,
+    camp,
+    role,
+    arcJson,
     isSceneRelevant,
     sortOrder,
   );
@@ -3480,6 +3580,9 @@ class Character extends DataClass implements Insertable<Character> {
           other.physicalState == this.physicalState &&
           other.mentalState == this.mentalState &&
           other.lastSeenChapterTitle == this.lastSeenChapterTitle &&
+          other.camp == this.camp &&
+          other.role == this.role &&
+          other.arcJson == this.arcJson &&
           other.isSceneRelevant == this.isSceneRelevant &&
           other.sortOrder == this.sortOrder);
 }
@@ -3497,6 +3600,9 @@ class CharactersCompanion extends UpdateCompanion<Character> {
   final Value<String?> physicalState;
   final Value<String?> mentalState;
   final Value<String?> lastSeenChapterTitle;
+  final Value<String?> camp;
+  final Value<String?> role;
+  final Value<String> arcJson;
   final Value<bool> isSceneRelevant;
   final Value<int> sortOrder;
   final Value<int> rowid;
@@ -3513,6 +3619,9 @@ class CharactersCompanion extends UpdateCompanion<Character> {
     this.physicalState = const Value.absent(),
     this.mentalState = const Value.absent(),
     this.lastSeenChapterTitle = const Value.absent(),
+    this.camp = const Value.absent(),
+    this.role = const Value.absent(),
+    this.arcJson = const Value.absent(),
     this.isSceneRelevant = const Value.absent(),
     this.sortOrder = const Value.absent(),
     this.rowid = const Value.absent(),
@@ -3530,6 +3639,9 @@ class CharactersCompanion extends UpdateCompanion<Character> {
     this.physicalState = const Value.absent(),
     this.mentalState = const Value.absent(),
     this.lastSeenChapterTitle = const Value.absent(),
+    this.camp = const Value.absent(),
+    this.role = const Value.absent(),
+    this.arcJson = const Value.absent(),
     this.isSceneRelevant = const Value.absent(),
     this.sortOrder = const Value.absent(),
     this.rowid = const Value.absent(),
@@ -3549,6 +3661,9 @@ class CharactersCompanion extends UpdateCompanion<Character> {
     Expression<String>? physicalState,
     Expression<String>? mentalState,
     Expression<String>? lastSeenChapterTitle,
+    Expression<String>? camp,
+    Expression<String>? role,
+    Expression<String>? arcJson,
     Expression<bool>? isSceneRelevant,
     Expression<int>? sortOrder,
     Expression<int>? rowid,
@@ -3567,6 +3682,9 @@ class CharactersCompanion extends UpdateCompanion<Character> {
       if (mentalState != null) 'mental_state': mentalState,
       if (lastSeenChapterTitle != null)
         'last_seen_chapter_title': lastSeenChapterTitle,
+      if (camp != null) 'camp': camp,
+      if (role != null) 'role': role,
+      if (arcJson != null) 'arc_json': arcJson,
       if (isSceneRelevant != null) 'is_scene_relevant': isSceneRelevant,
       if (sortOrder != null) 'sort_order': sortOrder,
       if (rowid != null) 'rowid': rowid,
@@ -3586,6 +3704,9 @@ class CharactersCompanion extends UpdateCompanion<Character> {
     Value<String?>? physicalState,
     Value<String?>? mentalState,
     Value<String?>? lastSeenChapterTitle,
+    Value<String?>? camp,
+    Value<String?>? role,
+    Value<String>? arcJson,
     Value<bool>? isSceneRelevant,
     Value<int>? sortOrder,
     Value<int>? rowid,
@@ -3603,6 +3724,9 @@ class CharactersCompanion extends UpdateCompanion<Character> {
       physicalState: physicalState ?? this.physicalState,
       mentalState: mentalState ?? this.mentalState,
       lastSeenChapterTitle: lastSeenChapterTitle ?? this.lastSeenChapterTitle,
+      camp: camp ?? this.camp,
+      role: role ?? this.role,
+      arcJson: arcJson ?? this.arcJson,
       isSceneRelevant: isSceneRelevant ?? this.isSceneRelevant,
       sortOrder: sortOrder ?? this.sortOrder,
       rowid: rowid ?? this.rowid,
@@ -3650,6 +3774,15 @@ class CharactersCompanion extends UpdateCompanion<Character> {
         lastSeenChapterTitle.value,
       );
     }
+    if (camp.present) {
+      map['camp'] = Variable<String>(camp.value);
+    }
+    if (role.present) {
+      map['role'] = Variable<String>(role.value);
+    }
+    if (arcJson.present) {
+      map['arc_json'] = Variable<String>(arcJson.value);
+    }
     if (isSceneRelevant.present) {
       map['is_scene_relevant'] = Variable<bool>(isSceneRelevant.value);
     }
@@ -3677,8 +3810,1776 @@ class CharactersCompanion extends UpdateCompanion<Character> {
           ..write('physicalState: $physicalState, ')
           ..write('mentalState: $mentalState, ')
           ..write('lastSeenChapterTitle: $lastSeenChapterTitle, ')
+          ..write('camp: $camp, ')
+          ..write('role: $role, ')
+          ..write('arcJson: $arcJson, ')
           ..write('isSceneRelevant: $isSceneRelevant, ')
           ..write('sortOrder: $sortOrder, ')
+          ..write('rowid: $rowid')
+          ..write(')'))
+        .toString();
+  }
+}
+
+class $CharacterRelationsTable extends CharacterRelations
+    with TableInfo<$CharacterRelationsTable, CharacterRelation> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $CharacterRelationsTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _idMeta = const VerificationMeta('id');
+  @override
+  late final GeneratedColumn<String> id = GeneratedColumn<String>(
+    'id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _novelIdMeta = const VerificationMeta(
+    'novelId',
+  );
+  @override
+  late final GeneratedColumn<String> novelId = GeneratedColumn<String>(
+    'novel_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'REFERENCES novels (id) ON DELETE CASCADE',
+    ),
+  );
+  static const VerificationMeta _sourceCharacterIdMeta = const VerificationMeta(
+    'sourceCharacterId',
+  );
+  @override
+  late final GeneratedColumn<String> sourceCharacterId =
+      GeneratedColumn<String>(
+        'source_character_id',
+        aliasedName,
+        false,
+        type: DriftSqlType.string,
+        requiredDuringInsert: true,
+        defaultConstraints: GeneratedColumn.constraintIsAlways(
+          'REFERENCES characters (id) ON DELETE CASCADE',
+        ),
+      );
+  static const VerificationMeta _targetCharacterIdMeta = const VerificationMeta(
+    'targetCharacterId',
+  );
+  @override
+  late final GeneratedColumn<String> targetCharacterId =
+      GeneratedColumn<String>(
+        'target_character_id',
+        aliasedName,
+        false,
+        type: DriftSqlType.string,
+        requiredDuringInsert: true,
+        defaultConstraints: GeneratedColumn.constraintIsAlways(
+          'REFERENCES characters (id) ON DELETE CASCADE',
+        ),
+      );
+  static const VerificationMeta _relationTypeMeta = const VerificationMeta(
+    'relationType',
+  );
+  @override
+  late final GeneratedColumn<String> relationType = GeneratedColumn<String>(
+    'relation_type',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+    defaultValue: const Constant('未知'),
+  );
+  static const VerificationMeta _labelMeta = const VerificationMeta('label');
+  @override
+  late final GeneratedColumn<String> label = GeneratedColumn<String>(
+    'label',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _descriptionMeta = const VerificationMeta(
+    'description',
+  );
+  @override
+  late final GeneratedColumn<String> description = GeneratedColumn<String>(
+    'description',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+    defaultValue: const Constant(''),
+  );
+  static const VerificationMeta _strengthMeta = const VerificationMeta(
+    'strength',
+  );
+  @override
+  late final GeneratedColumn<int> strength = GeneratedColumn<int>(
+    'strength',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    defaultValue: const Constant(3),
+  );
+  static const VerificationMeta _lineMeta = const VerificationMeta('line');
+  @override
+  late final GeneratedColumn<String> line = GeneratedColumn<String>(
+    'line',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+    defaultValue: const Constant('明线'),
+  );
+  static const VerificationMeta _statusMeta = const VerificationMeta('status');
+  @override
+  late final GeneratedColumn<String> status = GeneratedColumn<String>(
+    'status',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+    defaultValue: const Constant('active'),
+  );
+  static const VerificationMeta _evolutionJsonMeta = const VerificationMeta(
+    'evolutionJson',
+  );
+  @override
+  late final GeneratedColumn<String> evolutionJson = GeneratedColumn<String>(
+    'evolution_json',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+    defaultValue: const Constant('[]'),
+  );
+  static const VerificationMeta _firstChapterOrderMeta = const VerificationMeta(
+    'firstChapterOrder',
+  );
+  @override
+  late final GeneratedColumn<int> firstChapterOrder = GeneratedColumn<int>(
+    'first_chapter_order',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _lastChapterOrderMeta = const VerificationMeta(
+    'lastChapterOrder',
+  );
+  @override
+  late final GeneratedColumn<int> lastChapterOrder = GeneratedColumn<int>(
+    'last_chapter_order',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _updatedAtMeta = const VerificationMeta(
+    'updatedAt',
+  );
+  @override
+  late final GeneratedColumn<DateTime> updatedAt = GeneratedColumn<DateTime>(
+    'updated_at',
+    aliasedName,
+    false,
+    type: DriftSqlType.dateTime,
+    requiredDuringInsert: true,
+  );
+  @override
+  List<GeneratedColumn> get $columns => [
+    id,
+    novelId,
+    sourceCharacterId,
+    targetCharacterId,
+    relationType,
+    label,
+    description,
+    strength,
+    line,
+    status,
+    evolutionJson,
+    firstChapterOrder,
+    lastChapterOrder,
+    updatedAt,
+  ];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'character_relations';
+  @override
+  VerificationContext validateIntegrity(
+    Insertable<CharacterRelation> instance, {
+    bool isInserting = false,
+  }) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('id')) {
+      context.handle(_idMeta, id.isAcceptableOrUnknown(data['id']!, _idMeta));
+    } else if (isInserting) {
+      context.missing(_idMeta);
+    }
+    if (data.containsKey('novel_id')) {
+      context.handle(
+        _novelIdMeta,
+        novelId.isAcceptableOrUnknown(data['novel_id']!, _novelIdMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_novelIdMeta);
+    }
+    if (data.containsKey('source_character_id')) {
+      context.handle(
+        _sourceCharacterIdMeta,
+        sourceCharacterId.isAcceptableOrUnknown(
+          data['source_character_id']!,
+          _sourceCharacterIdMeta,
+        ),
+      );
+    } else if (isInserting) {
+      context.missing(_sourceCharacterIdMeta);
+    }
+    if (data.containsKey('target_character_id')) {
+      context.handle(
+        _targetCharacterIdMeta,
+        targetCharacterId.isAcceptableOrUnknown(
+          data['target_character_id']!,
+          _targetCharacterIdMeta,
+        ),
+      );
+    } else if (isInserting) {
+      context.missing(_targetCharacterIdMeta);
+    }
+    if (data.containsKey('relation_type')) {
+      context.handle(
+        _relationTypeMeta,
+        relationType.isAcceptableOrUnknown(
+          data['relation_type']!,
+          _relationTypeMeta,
+        ),
+      );
+    }
+    if (data.containsKey('label')) {
+      context.handle(
+        _labelMeta,
+        label.isAcceptableOrUnknown(data['label']!, _labelMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_labelMeta);
+    }
+    if (data.containsKey('description')) {
+      context.handle(
+        _descriptionMeta,
+        description.isAcceptableOrUnknown(
+          data['description']!,
+          _descriptionMeta,
+        ),
+      );
+    }
+    if (data.containsKey('strength')) {
+      context.handle(
+        _strengthMeta,
+        strength.isAcceptableOrUnknown(data['strength']!, _strengthMeta),
+      );
+    }
+    if (data.containsKey('line')) {
+      context.handle(
+        _lineMeta,
+        line.isAcceptableOrUnknown(data['line']!, _lineMeta),
+      );
+    }
+    if (data.containsKey('status')) {
+      context.handle(
+        _statusMeta,
+        status.isAcceptableOrUnknown(data['status']!, _statusMeta),
+      );
+    }
+    if (data.containsKey('evolution_json')) {
+      context.handle(
+        _evolutionJsonMeta,
+        evolutionJson.isAcceptableOrUnknown(
+          data['evolution_json']!,
+          _evolutionJsonMeta,
+        ),
+      );
+    }
+    if (data.containsKey('first_chapter_order')) {
+      context.handle(
+        _firstChapterOrderMeta,
+        firstChapterOrder.isAcceptableOrUnknown(
+          data['first_chapter_order']!,
+          _firstChapterOrderMeta,
+        ),
+      );
+    }
+    if (data.containsKey('last_chapter_order')) {
+      context.handle(
+        _lastChapterOrderMeta,
+        lastChapterOrder.isAcceptableOrUnknown(
+          data['last_chapter_order']!,
+          _lastChapterOrderMeta,
+        ),
+      );
+    }
+    if (data.containsKey('updated_at')) {
+      context.handle(
+        _updatedAtMeta,
+        updatedAt.isAcceptableOrUnknown(data['updated_at']!, _updatedAtMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_updatedAtMeta);
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {id};
+  @override
+  CharacterRelation map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return CharacterRelation(
+      id: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}id'],
+      )!,
+      novelId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}novel_id'],
+      )!,
+      sourceCharacterId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}source_character_id'],
+      )!,
+      targetCharacterId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}target_character_id'],
+      )!,
+      relationType: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}relation_type'],
+      )!,
+      label: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}label'],
+      )!,
+      description: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}description'],
+      )!,
+      strength: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}strength'],
+      )!,
+      line: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}line'],
+      )!,
+      status: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}status'],
+      )!,
+      evolutionJson: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}evolution_json'],
+      )!,
+      firstChapterOrder: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}first_chapter_order'],
+      ),
+      lastChapterOrder: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}last_chapter_order'],
+      ),
+      updatedAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.dateTime,
+        data['${effectivePrefix}updated_at'],
+      )!,
+    );
+  }
+
+  @override
+  $CharacterRelationsTable createAlias(String alias) {
+    return $CharacterRelationsTable(attachedDatabase, alias);
+  }
+}
+
+class CharacterRelation extends DataClass
+    implements Insertable<CharacterRelation> {
+  final String id;
+  final String novelId;
+  final String sourceCharacterId;
+  final String targetCharacterId;
+  final String relationType;
+  final String label;
+  final String description;
+  final int strength;
+  final String line;
+  final String status;
+  final String evolutionJson;
+  final int? firstChapterOrder;
+  final int? lastChapterOrder;
+  final DateTime updatedAt;
+  const CharacterRelation({
+    required this.id,
+    required this.novelId,
+    required this.sourceCharacterId,
+    required this.targetCharacterId,
+    required this.relationType,
+    required this.label,
+    required this.description,
+    required this.strength,
+    required this.line,
+    required this.status,
+    required this.evolutionJson,
+    this.firstChapterOrder,
+    this.lastChapterOrder,
+    required this.updatedAt,
+  });
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['id'] = Variable<String>(id);
+    map['novel_id'] = Variable<String>(novelId);
+    map['source_character_id'] = Variable<String>(sourceCharacterId);
+    map['target_character_id'] = Variable<String>(targetCharacterId);
+    map['relation_type'] = Variable<String>(relationType);
+    map['label'] = Variable<String>(label);
+    map['description'] = Variable<String>(description);
+    map['strength'] = Variable<int>(strength);
+    map['line'] = Variable<String>(line);
+    map['status'] = Variable<String>(status);
+    map['evolution_json'] = Variable<String>(evolutionJson);
+    if (!nullToAbsent || firstChapterOrder != null) {
+      map['first_chapter_order'] = Variable<int>(firstChapterOrder);
+    }
+    if (!nullToAbsent || lastChapterOrder != null) {
+      map['last_chapter_order'] = Variable<int>(lastChapterOrder);
+    }
+    map['updated_at'] = Variable<DateTime>(updatedAt);
+    return map;
+  }
+
+  CharacterRelationsCompanion toCompanion(bool nullToAbsent) {
+    return CharacterRelationsCompanion(
+      id: Value(id),
+      novelId: Value(novelId),
+      sourceCharacterId: Value(sourceCharacterId),
+      targetCharacterId: Value(targetCharacterId),
+      relationType: Value(relationType),
+      label: Value(label),
+      description: Value(description),
+      strength: Value(strength),
+      line: Value(line),
+      status: Value(status),
+      evolutionJson: Value(evolutionJson),
+      firstChapterOrder: firstChapterOrder == null && nullToAbsent
+          ? const Value.absent()
+          : Value(firstChapterOrder),
+      lastChapterOrder: lastChapterOrder == null && nullToAbsent
+          ? const Value.absent()
+          : Value(lastChapterOrder),
+      updatedAt: Value(updatedAt),
+    );
+  }
+
+  factory CharacterRelation.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return CharacterRelation(
+      id: serializer.fromJson<String>(json['id']),
+      novelId: serializer.fromJson<String>(json['novelId']),
+      sourceCharacterId: serializer.fromJson<String>(json['sourceCharacterId']),
+      targetCharacterId: serializer.fromJson<String>(json['targetCharacterId']),
+      relationType: serializer.fromJson<String>(json['relationType']),
+      label: serializer.fromJson<String>(json['label']),
+      description: serializer.fromJson<String>(json['description']),
+      strength: serializer.fromJson<int>(json['strength']),
+      line: serializer.fromJson<String>(json['line']),
+      status: serializer.fromJson<String>(json['status']),
+      evolutionJson: serializer.fromJson<String>(json['evolutionJson']),
+      firstChapterOrder: serializer.fromJson<int?>(json['firstChapterOrder']),
+      lastChapterOrder: serializer.fromJson<int?>(json['lastChapterOrder']),
+      updatedAt: serializer.fromJson<DateTime>(json['updatedAt']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'id': serializer.toJson<String>(id),
+      'novelId': serializer.toJson<String>(novelId),
+      'sourceCharacterId': serializer.toJson<String>(sourceCharacterId),
+      'targetCharacterId': serializer.toJson<String>(targetCharacterId),
+      'relationType': serializer.toJson<String>(relationType),
+      'label': serializer.toJson<String>(label),
+      'description': serializer.toJson<String>(description),
+      'strength': serializer.toJson<int>(strength),
+      'line': serializer.toJson<String>(line),
+      'status': serializer.toJson<String>(status),
+      'evolutionJson': serializer.toJson<String>(evolutionJson),
+      'firstChapterOrder': serializer.toJson<int?>(firstChapterOrder),
+      'lastChapterOrder': serializer.toJson<int?>(lastChapterOrder),
+      'updatedAt': serializer.toJson<DateTime>(updatedAt),
+    };
+  }
+
+  CharacterRelation copyWith({
+    String? id,
+    String? novelId,
+    String? sourceCharacterId,
+    String? targetCharacterId,
+    String? relationType,
+    String? label,
+    String? description,
+    int? strength,
+    String? line,
+    String? status,
+    String? evolutionJson,
+    Value<int?> firstChapterOrder = const Value.absent(),
+    Value<int?> lastChapterOrder = const Value.absent(),
+    DateTime? updatedAt,
+  }) => CharacterRelation(
+    id: id ?? this.id,
+    novelId: novelId ?? this.novelId,
+    sourceCharacterId: sourceCharacterId ?? this.sourceCharacterId,
+    targetCharacterId: targetCharacterId ?? this.targetCharacterId,
+    relationType: relationType ?? this.relationType,
+    label: label ?? this.label,
+    description: description ?? this.description,
+    strength: strength ?? this.strength,
+    line: line ?? this.line,
+    status: status ?? this.status,
+    evolutionJson: evolutionJson ?? this.evolutionJson,
+    firstChapterOrder: firstChapterOrder.present
+        ? firstChapterOrder.value
+        : this.firstChapterOrder,
+    lastChapterOrder: lastChapterOrder.present
+        ? lastChapterOrder.value
+        : this.lastChapterOrder,
+    updatedAt: updatedAt ?? this.updatedAt,
+  );
+  CharacterRelation copyWithCompanion(CharacterRelationsCompanion data) {
+    return CharacterRelation(
+      id: data.id.present ? data.id.value : this.id,
+      novelId: data.novelId.present ? data.novelId.value : this.novelId,
+      sourceCharacterId: data.sourceCharacterId.present
+          ? data.sourceCharacterId.value
+          : this.sourceCharacterId,
+      targetCharacterId: data.targetCharacterId.present
+          ? data.targetCharacterId.value
+          : this.targetCharacterId,
+      relationType: data.relationType.present
+          ? data.relationType.value
+          : this.relationType,
+      label: data.label.present ? data.label.value : this.label,
+      description: data.description.present
+          ? data.description.value
+          : this.description,
+      strength: data.strength.present ? data.strength.value : this.strength,
+      line: data.line.present ? data.line.value : this.line,
+      status: data.status.present ? data.status.value : this.status,
+      evolutionJson: data.evolutionJson.present
+          ? data.evolutionJson.value
+          : this.evolutionJson,
+      firstChapterOrder: data.firstChapterOrder.present
+          ? data.firstChapterOrder.value
+          : this.firstChapterOrder,
+      lastChapterOrder: data.lastChapterOrder.present
+          ? data.lastChapterOrder.value
+          : this.lastChapterOrder,
+      updatedAt: data.updatedAt.present ? data.updatedAt.value : this.updatedAt,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('CharacterRelation(')
+          ..write('id: $id, ')
+          ..write('novelId: $novelId, ')
+          ..write('sourceCharacterId: $sourceCharacterId, ')
+          ..write('targetCharacterId: $targetCharacterId, ')
+          ..write('relationType: $relationType, ')
+          ..write('label: $label, ')
+          ..write('description: $description, ')
+          ..write('strength: $strength, ')
+          ..write('line: $line, ')
+          ..write('status: $status, ')
+          ..write('evolutionJson: $evolutionJson, ')
+          ..write('firstChapterOrder: $firstChapterOrder, ')
+          ..write('lastChapterOrder: $lastChapterOrder, ')
+          ..write('updatedAt: $updatedAt')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(
+    id,
+    novelId,
+    sourceCharacterId,
+    targetCharacterId,
+    relationType,
+    label,
+    description,
+    strength,
+    line,
+    status,
+    evolutionJson,
+    firstChapterOrder,
+    lastChapterOrder,
+    updatedAt,
+  );
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is CharacterRelation &&
+          other.id == this.id &&
+          other.novelId == this.novelId &&
+          other.sourceCharacterId == this.sourceCharacterId &&
+          other.targetCharacterId == this.targetCharacterId &&
+          other.relationType == this.relationType &&
+          other.label == this.label &&
+          other.description == this.description &&
+          other.strength == this.strength &&
+          other.line == this.line &&
+          other.status == this.status &&
+          other.evolutionJson == this.evolutionJson &&
+          other.firstChapterOrder == this.firstChapterOrder &&
+          other.lastChapterOrder == this.lastChapterOrder &&
+          other.updatedAt == this.updatedAt);
+}
+
+class CharacterRelationsCompanion extends UpdateCompanion<CharacterRelation> {
+  final Value<String> id;
+  final Value<String> novelId;
+  final Value<String> sourceCharacterId;
+  final Value<String> targetCharacterId;
+  final Value<String> relationType;
+  final Value<String> label;
+  final Value<String> description;
+  final Value<int> strength;
+  final Value<String> line;
+  final Value<String> status;
+  final Value<String> evolutionJson;
+  final Value<int?> firstChapterOrder;
+  final Value<int?> lastChapterOrder;
+  final Value<DateTime> updatedAt;
+  final Value<int> rowid;
+  const CharacterRelationsCompanion({
+    this.id = const Value.absent(),
+    this.novelId = const Value.absent(),
+    this.sourceCharacterId = const Value.absent(),
+    this.targetCharacterId = const Value.absent(),
+    this.relationType = const Value.absent(),
+    this.label = const Value.absent(),
+    this.description = const Value.absent(),
+    this.strength = const Value.absent(),
+    this.line = const Value.absent(),
+    this.status = const Value.absent(),
+    this.evolutionJson = const Value.absent(),
+    this.firstChapterOrder = const Value.absent(),
+    this.lastChapterOrder = const Value.absent(),
+    this.updatedAt = const Value.absent(),
+    this.rowid = const Value.absent(),
+  });
+  CharacterRelationsCompanion.insert({
+    required String id,
+    required String novelId,
+    required String sourceCharacterId,
+    required String targetCharacterId,
+    this.relationType = const Value.absent(),
+    required String label,
+    this.description = const Value.absent(),
+    this.strength = const Value.absent(),
+    this.line = const Value.absent(),
+    this.status = const Value.absent(),
+    this.evolutionJson = const Value.absent(),
+    this.firstChapterOrder = const Value.absent(),
+    this.lastChapterOrder = const Value.absent(),
+    required DateTime updatedAt,
+    this.rowid = const Value.absent(),
+  }) : id = Value(id),
+       novelId = Value(novelId),
+       sourceCharacterId = Value(sourceCharacterId),
+       targetCharacterId = Value(targetCharacterId),
+       label = Value(label),
+       updatedAt = Value(updatedAt);
+  static Insertable<CharacterRelation> custom({
+    Expression<String>? id,
+    Expression<String>? novelId,
+    Expression<String>? sourceCharacterId,
+    Expression<String>? targetCharacterId,
+    Expression<String>? relationType,
+    Expression<String>? label,
+    Expression<String>? description,
+    Expression<int>? strength,
+    Expression<String>? line,
+    Expression<String>? status,
+    Expression<String>? evolutionJson,
+    Expression<int>? firstChapterOrder,
+    Expression<int>? lastChapterOrder,
+    Expression<DateTime>? updatedAt,
+    Expression<int>? rowid,
+  }) {
+    return RawValuesInsertable({
+      if (id != null) 'id': id,
+      if (novelId != null) 'novel_id': novelId,
+      if (sourceCharacterId != null) 'source_character_id': sourceCharacterId,
+      if (targetCharacterId != null) 'target_character_id': targetCharacterId,
+      if (relationType != null) 'relation_type': relationType,
+      if (label != null) 'label': label,
+      if (description != null) 'description': description,
+      if (strength != null) 'strength': strength,
+      if (line != null) 'line': line,
+      if (status != null) 'status': status,
+      if (evolutionJson != null) 'evolution_json': evolutionJson,
+      if (firstChapterOrder != null) 'first_chapter_order': firstChapterOrder,
+      if (lastChapterOrder != null) 'last_chapter_order': lastChapterOrder,
+      if (updatedAt != null) 'updated_at': updatedAt,
+      if (rowid != null) 'rowid': rowid,
+    });
+  }
+
+  CharacterRelationsCompanion copyWith({
+    Value<String>? id,
+    Value<String>? novelId,
+    Value<String>? sourceCharacterId,
+    Value<String>? targetCharacterId,
+    Value<String>? relationType,
+    Value<String>? label,
+    Value<String>? description,
+    Value<int>? strength,
+    Value<String>? line,
+    Value<String>? status,
+    Value<String>? evolutionJson,
+    Value<int?>? firstChapterOrder,
+    Value<int?>? lastChapterOrder,
+    Value<DateTime>? updatedAt,
+    Value<int>? rowid,
+  }) {
+    return CharacterRelationsCompanion(
+      id: id ?? this.id,
+      novelId: novelId ?? this.novelId,
+      sourceCharacterId: sourceCharacterId ?? this.sourceCharacterId,
+      targetCharacterId: targetCharacterId ?? this.targetCharacterId,
+      relationType: relationType ?? this.relationType,
+      label: label ?? this.label,
+      description: description ?? this.description,
+      strength: strength ?? this.strength,
+      line: line ?? this.line,
+      status: status ?? this.status,
+      evolutionJson: evolutionJson ?? this.evolutionJson,
+      firstChapterOrder: firstChapterOrder ?? this.firstChapterOrder,
+      lastChapterOrder: lastChapterOrder ?? this.lastChapterOrder,
+      updatedAt: updatedAt ?? this.updatedAt,
+      rowid: rowid ?? this.rowid,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (id.present) {
+      map['id'] = Variable<String>(id.value);
+    }
+    if (novelId.present) {
+      map['novel_id'] = Variable<String>(novelId.value);
+    }
+    if (sourceCharacterId.present) {
+      map['source_character_id'] = Variable<String>(sourceCharacterId.value);
+    }
+    if (targetCharacterId.present) {
+      map['target_character_id'] = Variable<String>(targetCharacterId.value);
+    }
+    if (relationType.present) {
+      map['relation_type'] = Variable<String>(relationType.value);
+    }
+    if (label.present) {
+      map['label'] = Variable<String>(label.value);
+    }
+    if (description.present) {
+      map['description'] = Variable<String>(description.value);
+    }
+    if (strength.present) {
+      map['strength'] = Variable<int>(strength.value);
+    }
+    if (line.present) {
+      map['line'] = Variable<String>(line.value);
+    }
+    if (status.present) {
+      map['status'] = Variable<String>(status.value);
+    }
+    if (evolutionJson.present) {
+      map['evolution_json'] = Variable<String>(evolutionJson.value);
+    }
+    if (firstChapterOrder.present) {
+      map['first_chapter_order'] = Variable<int>(firstChapterOrder.value);
+    }
+    if (lastChapterOrder.present) {
+      map['last_chapter_order'] = Variable<int>(lastChapterOrder.value);
+    }
+    if (updatedAt.present) {
+      map['updated_at'] = Variable<DateTime>(updatedAt.value);
+    }
+    if (rowid.present) {
+      map['rowid'] = Variable<int>(rowid.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('CharacterRelationsCompanion(')
+          ..write('id: $id, ')
+          ..write('novelId: $novelId, ')
+          ..write('sourceCharacterId: $sourceCharacterId, ')
+          ..write('targetCharacterId: $targetCharacterId, ')
+          ..write('relationType: $relationType, ')
+          ..write('label: $label, ')
+          ..write('description: $description, ')
+          ..write('strength: $strength, ')
+          ..write('line: $line, ')
+          ..write('status: $status, ')
+          ..write('evolutionJson: $evolutionJson, ')
+          ..write('firstChapterOrder: $firstChapterOrder, ')
+          ..write('lastChapterOrder: $lastChapterOrder, ')
+          ..write('updatedAt: $updatedAt, ')
+          ..write('rowid: $rowid')
+          ..write(')'))
+        .toString();
+  }
+}
+
+class $TimelineEventsTable extends TimelineEvents
+    with TableInfo<$TimelineEventsTable, TimelineEvent> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $TimelineEventsTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _idMeta = const VerificationMeta('id');
+  @override
+  late final GeneratedColumn<String> id = GeneratedColumn<String>(
+    'id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _novelIdMeta = const VerificationMeta(
+    'novelId',
+  );
+  @override
+  late final GeneratedColumn<String> novelId = GeneratedColumn<String>(
+    'novel_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'REFERENCES novels (id) ON DELETE CASCADE',
+    ),
+  );
+  static const VerificationMeta _volumeIdMeta = const VerificationMeta(
+    'volumeId',
+  );
+  @override
+  late final GeneratedColumn<String> volumeId = GeneratedColumn<String>(
+    'volume_id',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _chapterIdMeta = const VerificationMeta(
+    'chapterId',
+  );
+  @override
+  late final GeneratedColumn<String> chapterId = GeneratedColumn<String>(
+    'chapter_id',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _chapterOrderMeta = const VerificationMeta(
+    'chapterOrder',
+  );
+  @override
+  late final GeneratedColumn<int> chapterOrder = GeneratedColumn<int>(
+    'chapter_order',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _chapterRangeMeta = const VerificationMeta(
+    'chapterRange',
+  );
+  @override
+  late final GeneratedColumn<String> chapterRange = GeneratedColumn<String>(
+    'chapter_range',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _inWorldTimeMeta = const VerificationMeta(
+    'inWorldTime',
+  );
+  @override
+  late final GeneratedColumn<String> inWorldTime = GeneratedColumn<String>(
+    'in_world_time',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _phaseMeta = const VerificationMeta('phase');
+  @override
+  late final GeneratedColumn<String> phase = GeneratedColumn<String>(
+    'phase',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _titleMeta = const VerificationMeta('title');
+  @override
+  late final GeneratedColumn<String> title = GeneratedColumn<String>(
+    'title',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _summaryMeta = const VerificationMeta(
+    'summary',
+  );
+  @override
+  late final GeneratedColumn<String> summary = GeneratedColumn<String>(
+    'summary',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+    defaultValue: const Constant(''),
+  );
+  static const VerificationMeta _locationMeta = const VerificationMeta(
+    'location',
+  );
+  @override
+  late final GeneratedColumn<String> location = GeneratedColumn<String>(
+    'location',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _participantsJsonMeta = const VerificationMeta(
+    'participantsJson',
+  );
+  @override
+  late final GeneratedColumn<String> participantsJson = GeneratedColumn<String>(
+    'participants_json',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+    defaultValue: const Constant('[]'),
+  );
+  static const VerificationMeta _linkedForeshadowingIdsJsonMeta =
+      const VerificationMeta('linkedForeshadowingIdsJson');
+  @override
+  late final GeneratedColumn<String> linkedForeshadowingIdsJson =
+      GeneratedColumn<String>(
+        'linked_foreshadowing_ids_json',
+        aliasedName,
+        false,
+        type: DriftSqlType.string,
+        requiredDuringInsert: false,
+        defaultValue: const Constant('[]'),
+      );
+  static const VerificationMeta _importanceMeta = const VerificationMeta(
+    'importance',
+  );
+  @override
+  late final GeneratedColumn<String> importance = GeneratedColumn<String>(
+    'importance',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+    defaultValue: const Constant('normal'),
+  );
+  static const VerificationMeta _sortOrderMeta = const VerificationMeta(
+    'sortOrder',
+  );
+  @override
+  late final GeneratedColumn<int> sortOrder = GeneratedColumn<int>(
+    'sort_order',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    defaultValue: const Constant(0),
+  );
+  static const VerificationMeta _createdAtMeta = const VerificationMeta(
+    'createdAt',
+  );
+  @override
+  late final GeneratedColumn<DateTime> createdAt = GeneratedColumn<DateTime>(
+    'created_at',
+    aliasedName,
+    false,
+    type: DriftSqlType.dateTime,
+    requiredDuringInsert: true,
+  );
+  @override
+  List<GeneratedColumn> get $columns => [
+    id,
+    novelId,
+    volumeId,
+    chapterId,
+    chapterOrder,
+    chapterRange,
+    inWorldTime,
+    phase,
+    title,
+    summary,
+    location,
+    participantsJson,
+    linkedForeshadowingIdsJson,
+    importance,
+    sortOrder,
+    createdAt,
+  ];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'timeline_events';
+  @override
+  VerificationContext validateIntegrity(
+    Insertable<TimelineEvent> instance, {
+    bool isInserting = false,
+  }) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('id')) {
+      context.handle(_idMeta, id.isAcceptableOrUnknown(data['id']!, _idMeta));
+    } else if (isInserting) {
+      context.missing(_idMeta);
+    }
+    if (data.containsKey('novel_id')) {
+      context.handle(
+        _novelIdMeta,
+        novelId.isAcceptableOrUnknown(data['novel_id']!, _novelIdMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_novelIdMeta);
+    }
+    if (data.containsKey('volume_id')) {
+      context.handle(
+        _volumeIdMeta,
+        volumeId.isAcceptableOrUnknown(data['volume_id']!, _volumeIdMeta),
+      );
+    }
+    if (data.containsKey('chapter_id')) {
+      context.handle(
+        _chapterIdMeta,
+        chapterId.isAcceptableOrUnknown(data['chapter_id']!, _chapterIdMeta),
+      );
+    }
+    if (data.containsKey('chapter_order')) {
+      context.handle(
+        _chapterOrderMeta,
+        chapterOrder.isAcceptableOrUnknown(
+          data['chapter_order']!,
+          _chapterOrderMeta,
+        ),
+      );
+    }
+    if (data.containsKey('chapter_range')) {
+      context.handle(
+        _chapterRangeMeta,
+        chapterRange.isAcceptableOrUnknown(
+          data['chapter_range']!,
+          _chapterRangeMeta,
+        ),
+      );
+    }
+    if (data.containsKey('in_world_time')) {
+      context.handle(
+        _inWorldTimeMeta,
+        inWorldTime.isAcceptableOrUnknown(
+          data['in_world_time']!,
+          _inWorldTimeMeta,
+        ),
+      );
+    }
+    if (data.containsKey('phase')) {
+      context.handle(
+        _phaseMeta,
+        phase.isAcceptableOrUnknown(data['phase']!, _phaseMeta),
+      );
+    }
+    if (data.containsKey('title')) {
+      context.handle(
+        _titleMeta,
+        title.isAcceptableOrUnknown(data['title']!, _titleMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_titleMeta);
+    }
+    if (data.containsKey('summary')) {
+      context.handle(
+        _summaryMeta,
+        summary.isAcceptableOrUnknown(data['summary']!, _summaryMeta),
+      );
+    }
+    if (data.containsKey('location')) {
+      context.handle(
+        _locationMeta,
+        location.isAcceptableOrUnknown(data['location']!, _locationMeta),
+      );
+    }
+    if (data.containsKey('participants_json')) {
+      context.handle(
+        _participantsJsonMeta,
+        participantsJson.isAcceptableOrUnknown(
+          data['participants_json']!,
+          _participantsJsonMeta,
+        ),
+      );
+    }
+    if (data.containsKey('linked_foreshadowing_ids_json')) {
+      context.handle(
+        _linkedForeshadowingIdsJsonMeta,
+        linkedForeshadowingIdsJson.isAcceptableOrUnknown(
+          data['linked_foreshadowing_ids_json']!,
+          _linkedForeshadowingIdsJsonMeta,
+        ),
+      );
+    }
+    if (data.containsKey('importance')) {
+      context.handle(
+        _importanceMeta,
+        importance.isAcceptableOrUnknown(data['importance']!, _importanceMeta),
+      );
+    }
+    if (data.containsKey('sort_order')) {
+      context.handle(
+        _sortOrderMeta,
+        sortOrder.isAcceptableOrUnknown(data['sort_order']!, _sortOrderMeta),
+      );
+    }
+    if (data.containsKey('created_at')) {
+      context.handle(
+        _createdAtMeta,
+        createdAt.isAcceptableOrUnknown(data['created_at']!, _createdAtMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_createdAtMeta);
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {id};
+  @override
+  TimelineEvent map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return TimelineEvent(
+      id: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}id'],
+      )!,
+      novelId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}novel_id'],
+      )!,
+      volumeId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}volume_id'],
+      ),
+      chapterId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}chapter_id'],
+      ),
+      chapterOrder: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}chapter_order'],
+      ),
+      chapterRange: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}chapter_range'],
+      ),
+      inWorldTime: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}in_world_time'],
+      ),
+      phase: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}phase'],
+      ),
+      title: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}title'],
+      )!,
+      summary: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}summary'],
+      )!,
+      location: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}location'],
+      ),
+      participantsJson: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}participants_json'],
+      )!,
+      linkedForeshadowingIdsJson: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}linked_foreshadowing_ids_json'],
+      )!,
+      importance: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}importance'],
+      )!,
+      sortOrder: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}sort_order'],
+      )!,
+      createdAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.dateTime,
+        data['${effectivePrefix}created_at'],
+      )!,
+    );
+  }
+
+  @override
+  $TimelineEventsTable createAlias(String alias) {
+    return $TimelineEventsTable(attachedDatabase, alias);
+  }
+}
+
+class TimelineEvent extends DataClass implements Insertable<TimelineEvent> {
+  final String id;
+  final String novelId;
+  final String? volumeId;
+  final String? chapterId;
+  final int? chapterOrder;
+  final String? chapterRange;
+  final String? inWorldTime;
+  final String? phase;
+  final String title;
+  final String summary;
+  final String? location;
+  final String participantsJson;
+  final String linkedForeshadowingIdsJson;
+  final String importance;
+  final int sortOrder;
+  final DateTime createdAt;
+  const TimelineEvent({
+    required this.id,
+    required this.novelId,
+    this.volumeId,
+    this.chapterId,
+    this.chapterOrder,
+    this.chapterRange,
+    this.inWorldTime,
+    this.phase,
+    required this.title,
+    required this.summary,
+    this.location,
+    required this.participantsJson,
+    required this.linkedForeshadowingIdsJson,
+    required this.importance,
+    required this.sortOrder,
+    required this.createdAt,
+  });
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['id'] = Variable<String>(id);
+    map['novel_id'] = Variable<String>(novelId);
+    if (!nullToAbsent || volumeId != null) {
+      map['volume_id'] = Variable<String>(volumeId);
+    }
+    if (!nullToAbsent || chapterId != null) {
+      map['chapter_id'] = Variable<String>(chapterId);
+    }
+    if (!nullToAbsent || chapterOrder != null) {
+      map['chapter_order'] = Variable<int>(chapterOrder);
+    }
+    if (!nullToAbsent || chapterRange != null) {
+      map['chapter_range'] = Variable<String>(chapterRange);
+    }
+    if (!nullToAbsent || inWorldTime != null) {
+      map['in_world_time'] = Variable<String>(inWorldTime);
+    }
+    if (!nullToAbsent || phase != null) {
+      map['phase'] = Variable<String>(phase);
+    }
+    map['title'] = Variable<String>(title);
+    map['summary'] = Variable<String>(summary);
+    if (!nullToAbsent || location != null) {
+      map['location'] = Variable<String>(location);
+    }
+    map['participants_json'] = Variable<String>(participantsJson);
+    map['linked_foreshadowing_ids_json'] = Variable<String>(
+      linkedForeshadowingIdsJson,
+    );
+    map['importance'] = Variable<String>(importance);
+    map['sort_order'] = Variable<int>(sortOrder);
+    map['created_at'] = Variable<DateTime>(createdAt);
+    return map;
+  }
+
+  TimelineEventsCompanion toCompanion(bool nullToAbsent) {
+    return TimelineEventsCompanion(
+      id: Value(id),
+      novelId: Value(novelId),
+      volumeId: volumeId == null && nullToAbsent
+          ? const Value.absent()
+          : Value(volumeId),
+      chapterId: chapterId == null && nullToAbsent
+          ? const Value.absent()
+          : Value(chapterId),
+      chapterOrder: chapterOrder == null && nullToAbsent
+          ? const Value.absent()
+          : Value(chapterOrder),
+      chapterRange: chapterRange == null && nullToAbsent
+          ? const Value.absent()
+          : Value(chapterRange),
+      inWorldTime: inWorldTime == null && nullToAbsent
+          ? const Value.absent()
+          : Value(inWorldTime),
+      phase: phase == null && nullToAbsent
+          ? const Value.absent()
+          : Value(phase),
+      title: Value(title),
+      summary: Value(summary),
+      location: location == null && nullToAbsent
+          ? const Value.absent()
+          : Value(location),
+      participantsJson: Value(participantsJson),
+      linkedForeshadowingIdsJson: Value(linkedForeshadowingIdsJson),
+      importance: Value(importance),
+      sortOrder: Value(sortOrder),
+      createdAt: Value(createdAt),
+    );
+  }
+
+  factory TimelineEvent.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return TimelineEvent(
+      id: serializer.fromJson<String>(json['id']),
+      novelId: serializer.fromJson<String>(json['novelId']),
+      volumeId: serializer.fromJson<String?>(json['volumeId']),
+      chapterId: serializer.fromJson<String?>(json['chapterId']),
+      chapterOrder: serializer.fromJson<int?>(json['chapterOrder']),
+      chapterRange: serializer.fromJson<String?>(json['chapterRange']),
+      inWorldTime: serializer.fromJson<String?>(json['inWorldTime']),
+      phase: serializer.fromJson<String?>(json['phase']),
+      title: serializer.fromJson<String>(json['title']),
+      summary: serializer.fromJson<String>(json['summary']),
+      location: serializer.fromJson<String?>(json['location']),
+      participantsJson: serializer.fromJson<String>(json['participantsJson']),
+      linkedForeshadowingIdsJson: serializer.fromJson<String>(
+        json['linkedForeshadowingIdsJson'],
+      ),
+      importance: serializer.fromJson<String>(json['importance']),
+      sortOrder: serializer.fromJson<int>(json['sortOrder']),
+      createdAt: serializer.fromJson<DateTime>(json['createdAt']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'id': serializer.toJson<String>(id),
+      'novelId': serializer.toJson<String>(novelId),
+      'volumeId': serializer.toJson<String?>(volumeId),
+      'chapterId': serializer.toJson<String?>(chapterId),
+      'chapterOrder': serializer.toJson<int?>(chapterOrder),
+      'chapterRange': serializer.toJson<String?>(chapterRange),
+      'inWorldTime': serializer.toJson<String?>(inWorldTime),
+      'phase': serializer.toJson<String?>(phase),
+      'title': serializer.toJson<String>(title),
+      'summary': serializer.toJson<String>(summary),
+      'location': serializer.toJson<String?>(location),
+      'participantsJson': serializer.toJson<String>(participantsJson),
+      'linkedForeshadowingIdsJson': serializer.toJson<String>(
+        linkedForeshadowingIdsJson,
+      ),
+      'importance': serializer.toJson<String>(importance),
+      'sortOrder': serializer.toJson<int>(sortOrder),
+      'createdAt': serializer.toJson<DateTime>(createdAt),
+    };
+  }
+
+  TimelineEvent copyWith({
+    String? id,
+    String? novelId,
+    Value<String?> volumeId = const Value.absent(),
+    Value<String?> chapterId = const Value.absent(),
+    Value<int?> chapterOrder = const Value.absent(),
+    Value<String?> chapterRange = const Value.absent(),
+    Value<String?> inWorldTime = const Value.absent(),
+    Value<String?> phase = const Value.absent(),
+    String? title,
+    String? summary,
+    Value<String?> location = const Value.absent(),
+    String? participantsJson,
+    String? linkedForeshadowingIdsJson,
+    String? importance,
+    int? sortOrder,
+    DateTime? createdAt,
+  }) => TimelineEvent(
+    id: id ?? this.id,
+    novelId: novelId ?? this.novelId,
+    volumeId: volumeId.present ? volumeId.value : this.volumeId,
+    chapterId: chapterId.present ? chapterId.value : this.chapterId,
+    chapterOrder: chapterOrder.present ? chapterOrder.value : this.chapterOrder,
+    chapterRange: chapterRange.present ? chapterRange.value : this.chapterRange,
+    inWorldTime: inWorldTime.present ? inWorldTime.value : this.inWorldTime,
+    phase: phase.present ? phase.value : this.phase,
+    title: title ?? this.title,
+    summary: summary ?? this.summary,
+    location: location.present ? location.value : this.location,
+    participantsJson: participantsJson ?? this.participantsJson,
+    linkedForeshadowingIdsJson:
+        linkedForeshadowingIdsJson ?? this.linkedForeshadowingIdsJson,
+    importance: importance ?? this.importance,
+    sortOrder: sortOrder ?? this.sortOrder,
+    createdAt: createdAt ?? this.createdAt,
+  );
+  TimelineEvent copyWithCompanion(TimelineEventsCompanion data) {
+    return TimelineEvent(
+      id: data.id.present ? data.id.value : this.id,
+      novelId: data.novelId.present ? data.novelId.value : this.novelId,
+      volumeId: data.volumeId.present ? data.volumeId.value : this.volumeId,
+      chapterId: data.chapterId.present ? data.chapterId.value : this.chapterId,
+      chapterOrder: data.chapterOrder.present
+          ? data.chapterOrder.value
+          : this.chapterOrder,
+      chapterRange: data.chapterRange.present
+          ? data.chapterRange.value
+          : this.chapterRange,
+      inWorldTime: data.inWorldTime.present
+          ? data.inWorldTime.value
+          : this.inWorldTime,
+      phase: data.phase.present ? data.phase.value : this.phase,
+      title: data.title.present ? data.title.value : this.title,
+      summary: data.summary.present ? data.summary.value : this.summary,
+      location: data.location.present ? data.location.value : this.location,
+      participantsJson: data.participantsJson.present
+          ? data.participantsJson.value
+          : this.participantsJson,
+      linkedForeshadowingIdsJson: data.linkedForeshadowingIdsJson.present
+          ? data.linkedForeshadowingIdsJson.value
+          : this.linkedForeshadowingIdsJson,
+      importance: data.importance.present
+          ? data.importance.value
+          : this.importance,
+      sortOrder: data.sortOrder.present ? data.sortOrder.value : this.sortOrder,
+      createdAt: data.createdAt.present ? data.createdAt.value : this.createdAt,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('TimelineEvent(')
+          ..write('id: $id, ')
+          ..write('novelId: $novelId, ')
+          ..write('volumeId: $volumeId, ')
+          ..write('chapterId: $chapterId, ')
+          ..write('chapterOrder: $chapterOrder, ')
+          ..write('chapterRange: $chapterRange, ')
+          ..write('inWorldTime: $inWorldTime, ')
+          ..write('phase: $phase, ')
+          ..write('title: $title, ')
+          ..write('summary: $summary, ')
+          ..write('location: $location, ')
+          ..write('participantsJson: $participantsJson, ')
+          ..write('linkedForeshadowingIdsJson: $linkedForeshadowingIdsJson, ')
+          ..write('importance: $importance, ')
+          ..write('sortOrder: $sortOrder, ')
+          ..write('createdAt: $createdAt')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(
+    id,
+    novelId,
+    volumeId,
+    chapterId,
+    chapterOrder,
+    chapterRange,
+    inWorldTime,
+    phase,
+    title,
+    summary,
+    location,
+    participantsJson,
+    linkedForeshadowingIdsJson,
+    importance,
+    sortOrder,
+    createdAt,
+  );
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is TimelineEvent &&
+          other.id == this.id &&
+          other.novelId == this.novelId &&
+          other.volumeId == this.volumeId &&
+          other.chapterId == this.chapterId &&
+          other.chapterOrder == this.chapterOrder &&
+          other.chapterRange == this.chapterRange &&
+          other.inWorldTime == this.inWorldTime &&
+          other.phase == this.phase &&
+          other.title == this.title &&
+          other.summary == this.summary &&
+          other.location == this.location &&
+          other.participantsJson == this.participantsJson &&
+          other.linkedForeshadowingIdsJson == this.linkedForeshadowingIdsJson &&
+          other.importance == this.importance &&
+          other.sortOrder == this.sortOrder &&
+          other.createdAt == this.createdAt);
+}
+
+class TimelineEventsCompanion extends UpdateCompanion<TimelineEvent> {
+  final Value<String> id;
+  final Value<String> novelId;
+  final Value<String?> volumeId;
+  final Value<String?> chapterId;
+  final Value<int?> chapterOrder;
+  final Value<String?> chapterRange;
+  final Value<String?> inWorldTime;
+  final Value<String?> phase;
+  final Value<String> title;
+  final Value<String> summary;
+  final Value<String?> location;
+  final Value<String> participantsJson;
+  final Value<String> linkedForeshadowingIdsJson;
+  final Value<String> importance;
+  final Value<int> sortOrder;
+  final Value<DateTime> createdAt;
+  final Value<int> rowid;
+  const TimelineEventsCompanion({
+    this.id = const Value.absent(),
+    this.novelId = const Value.absent(),
+    this.volumeId = const Value.absent(),
+    this.chapterId = const Value.absent(),
+    this.chapterOrder = const Value.absent(),
+    this.chapterRange = const Value.absent(),
+    this.inWorldTime = const Value.absent(),
+    this.phase = const Value.absent(),
+    this.title = const Value.absent(),
+    this.summary = const Value.absent(),
+    this.location = const Value.absent(),
+    this.participantsJson = const Value.absent(),
+    this.linkedForeshadowingIdsJson = const Value.absent(),
+    this.importance = const Value.absent(),
+    this.sortOrder = const Value.absent(),
+    this.createdAt = const Value.absent(),
+    this.rowid = const Value.absent(),
+  });
+  TimelineEventsCompanion.insert({
+    required String id,
+    required String novelId,
+    this.volumeId = const Value.absent(),
+    this.chapterId = const Value.absent(),
+    this.chapterOrder = const Value.absent(),
+    this.chapterRange = const Value.absent(),
+    this.inWorldTime = const Value.absent(),
+    this.phase = const Value.absent(),
+    required String title,
+    this.summary = const Value.absent(),
+    this.location = const Value.absent(),
+    this.participantsJson = const Value.absent(),
+    this.linkedForeshadowingIdsJson = const Value.absent(),
+    this.importance = const Value.absent(),
+    this.sortOrder = const Value.absent(),
+    required DateTime createdAt,
+    this.rowid = const Value.absent(),
+  }) : id = Value(id),
+       novelId = Value(novelId),
+       title = Value(title),
+       createdAt = Value(createdAt);
+  static Insertable<TimelineEvent> custom({
+    Expression<String>? id,
+    Expression<String>? novelId,
+    Expression<String>? volumeId,
+    Expression<String>? chapterId,
+    Expression<int>? chapterOrder,
+    Expression<String>? chapterRange,
+    Expression<String>? inWorldTime,
+    Expression<String>? phase,
+    Expression<String>? title,
+    Expression<String>? summary,
+    Expression<String>? location,
+    Expression<String>? participantsJson,
+    Expression<String>? linkedForeshadowingIdsJson,
+    Expression<String>? importance,
+    Expression<int>? sortOrder,
+    Expression<DateTime>? createdAt,
+    Expression<int>? rowid,
+  }) {
+    return RawValuesInsertable({
+      if (id != null) 'id': id,
+      if (novelId != null) 'novel_id': novelId,
+      if (volumeId != null) 'volume_id': volumeId,
+      if (chapterId != null) 'chapter_id': chapterId,
+      if (chapterOrder != null) 'chapter_order': chapterOrder,
+      if (chapterRange != null) 'chapter_range': chapterRange,
+      if (inWorldTime != null) 'in_world_time': inWorldTime,
+      if (phase != null) 'phase': phase,
+      if (title != null) 'title': title,
+      if (summary != null) 'summary': summary,
+      if (location != null) 'location': location,
+      if (participantsJson != null) 'participants_json': participantsJson,
+      if (linkedForeshadowingIdsJson != null)
+        'linked_foreshadowing_ids_json': linkedForeshadowingIdsJson,
+      if (importance != null) 'importance': importance,
+      if (sortOrder != null) 'sort_order': sortOrder,
+      if (createdAt != null) 'created_at': createdAt,
+      if (rowid != null) 'rowid': rowid,
+    });
+  }
+
+  TimelineEventsCompanion copyWith({
+    Value<String>? id,
+    Value<String>? novelId,
+    Value<String?>? volumeId,
+    Value<String?>? chapterId,
+    Value<int?>? chapterOrder,
+    Value<String?>? chapterRange,
+    Value<String?>? inWorldTime,
+    Value<String?>? phase,
+    Value<String>? title,
+    Value<String>? summary,
+    Value<String?>? location,
+    Value<String>? participantsJson,
+    Value<String>? linkedForeshadowingIdsJson,
+    Value<String>? importance,
+    Value<int>? sortOrder,
+    Value<DateTime>? createdAt,
+    Value<int>? rowid,
+  }) {
+    return TimelineEventsCompanion(
+      id: id ?? this.id,
+      novelId: novelId ?? this.novelId,
+      volumeId: volumeId ?? this.volumeId,
+      chapterId: chapterId ?? this.chapterId,
+      chapterOrder: chapterOrder ?? this.chapterOrder,
+      chapterRange: chapterRange ?? this.chapterRange,
+      inWorldTime: inWorldTime ?? this.inWorldTime,
+      phase: phase ?? this.phase,
+      title: title ?? this.title,
+      summary: summary ?? this.summary,
+      location: location ?? this.location,
+      participantsJson: participantsJson ?? this.participantsJson,
+      linkedForeshadowingIdsJson:
+          linkedForeshadowingIdsJson ?? this.linkedForeshadowingIdsJson,
+      importance: importance ?? this.importance,
+      sortOrder: sortOrder ?? this.sortOrder,
+      createdAt: createdAt ?? this.createdAt,
+      rowid: rowid ?? this.rowid,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (id.present) {
+      map['id'] = Variable<String>(id.value);
+    }
+    if (novelId.present) {
+      map['novel_id'] = Variable<String>(novelId.value);
+    }
+    if (volumeId.present) {
+      map['volume_id'] = Variable<String>(volumeId.value);
+    }
+    if (chapterId.present) {
+      map['chapter_id'] = Variable<String>(chapterId.value);
+    }
+    if (chapterOrder.present) {
+      map['chapter_order'] = Variable<int>(chapterOrder.value);
+    }
+    if (chapterRange.present) {
+      map['chapter_range'] = Variable<String>(chapterRange.value);
+    }
+    if (inWorldTime.present) {
+      map['in_world_time'] = Variable<String>(inWorldTime.value);
+    }
+    if (phase.present) {
+      map['phase'] = Variable<String>(phase.value);
+    }
+    if (title.present) {
+      map['title'] = Variable<String>(title.value);
+    }
+    if (summary.present) {
+      map['summary'] = Variable<String>(summary.value);
+    }
+    if (location.present) {
+      map['location'] = Variable<String>(location.value);
+    }
+    if (participantsJson.present) {
+      map['participants_json'] = Variable<String>(participantsJson.value);
+    }
+    if (linkedForeshadowingIdsJson.present) {
+      map['linked_foreshadowing_ids_json'] = Variable<String>(
+        linkedForeshadowingIdsJson.value,
+      );
+    }
+    if (importance.present) {
+      map['importance'] = Variable<String>(importance.value);
+    }
+    if (sortOrder.present) {
+      map['sort_order'] = Variable<int>(sortOrder.value);
+    }
+    if (createdAt.present) {
+      map['created_at'] = Variable<DateTime>(createdAt.value);
+    }
+    if (rowid.present) {
+      map['rowid'] = Variable<int>(rowid.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('TimelineEventsCompanion(')
+          ..write('id: $id, ')
+          ..write('novelId: $novelId, ')
+          ..write('volumeId: $volumeId, ')
+          ..write('chapterId: $chapterId, ')
+          ..write('chapterOrder: $chapterOrder, ')
+          ..write('chapterRange: $chapterRange, ')
+          ..write('inWorldTime: $inWorldTime, ')
+          ..write('phase: $phase, ')
+          ..write('title: $title, ')
+          ..write('summary: $summary, ')
+          ..write('location: $location, ')
+          ..write('participantsJson: $participantsJson, ')
+          ..write('linkedForeshadowingIdsJson: $linkedForeshadowingIdsJson, ')
+          ..write('importance: $importance, ')
+          ..write('sortOrder: $sortOrder, ')
+          ..write('createdAt: $createdAt, ')
           ..write('rowid: $rowid')
           ..write(')'))
         .toString();
@@ -4300,6 +6201,39 @@ class $ForeshadowingsTable extends Foreshadowings
     type: DriftSqlType.string,
     requiredDuringInsert: false,
   );
+  static const VerificationMeta _involvedCharactersJsonMeta =
+      const VerificationMeta('involvedCharactersJson');
+  @override
+  late final GeneratedColumn<String> involvedCharactersJson =
+      GeneratedColumn<String>(
+        'involved_characters_json',
+        aliasedName,
+        false,
+        type: DriftSqlType.string,
+        requiredDuringInsert: false,
+        defaultValue: const Constant('[]'),
+      );
+  static const VerificationMeta _resolvedChapterOrderMeta =
+      const VerificationMeta('resolvedChapterOrder');
+  @override
+  late final GeneratedColumn<int> resolvedChapterOrder = GeneratedColumn<int>(
+    'resolved_chapter_order',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _payoffDetailMeta = const VerificationMeta(
+    'payoffDetail',
+  );
+  @override
+  late final GeneratedColumn<String> payoffDetail = GeneratedColumn<String>(
+    'payoff_detail',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
   static const VerificationMeta _suggestedResolvedMeta = const VerificationMeta(
     'suggestedResolved',
   );
@@ -4337,6 +6271,9 @@ class $ForeshadowingsTable extends Foreshadowings
     plannedResolve,
     status,
     note,
+    involvedCharactersJson,
+    resolvedChapterOrder,
+    payoffDetail,
     suggestedResolved,
     createdAt,
   ];
@@ -4418,6 +6355,33 @@ class $ForeshadowingsTable extends Foreshadowings
         note.isAcceptableOrUnknown(data['note']!, _noteMeta),
       );
     }
+    if (data.containsKey('involved_characters_json')) {
+      context.handle(
+        _involvedCharactersJsonMeta,
+        involvedCharactersJson.isAcceptableOrUnknown(
+          data['involved_characters_json']!,
+          _involvedCharactersJsonMeta,
+        ),
+      );
+    }
+    if (data.containsKey('resolved_chapter_order')) {
+      context.handle(
+        _resolvedChapterOrderMeta,
+        resolvedChapterOrder.isAcceptableOrUnknown(
+          data['resolved_chapter_order']!,
+          _resolvedChapterOrderMeta,
+        ),
+      );
+    }
+    if (data.containsKey('payoff_detail')) {
+      context.handle(
+        _payoffDetailMeta,
+        payoffDetail.isAcceptableOrUnknown(
+          data['payoff_detail']!,
+          _payoffDetailMeta,
+        ),
+      );
+    }
     if (data.containsKey('suggested_resolved')) {
       context.handle(
         _suggestedResolvedMeta,
@@ -4480,6 +6444,18 @@ class $ForeshadowingsTable extends Foreshadowings
         DriftSqlType.string,
         data['${effectivePrefix}note'],
       ),
+      involvedCharactersJson: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}involved_characters_json'],
+      )!,
+      resolvedChapterOrder: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}resolved_chapter_order'],
+      ),
+      payoffDetail: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}payoff_detail'],
+      ),
       suggestedResolved: attachedDatabase.typeMapping.read(
         DriftSqlType.bool,
         data['${effectivePrefix}suggested_resolved'],
@@ -4507,6 +6483,9 @@ class Foreshadowing extends DataClass implements Insertable<Foreshadowing> {
   final String? plannedResolve;
   final String status;
   final String? note;
+  final String involvedCharactersJson;
+  final int? resolvedChapterOrder;
+  final String? payoffDetail;
   final bool suggestedResolved;
   final DateTime createdAt;
   const Foreshadowing({
@@ -4519,6 +6498,9 @@ class Foreshadowing extends DataClass implements Insertable<Foreshadowing> {
     this.plannedResolve,
     required this.status,
     this.note,
+    required this.involvedCharactersJson,
+    this.resolvedChapterOrder,
+    this.payoffDetail,
     required this.suggestedResolved,
     required this.createdAt,
   });
@@ -4544,6 +6526,13 @@ class Foreshadowing extends DataClass implements Insertable<Foreshadowing> {
     if (!nullToAbsent || note != null) {
       map['note'] = Variable<String>(note);
     }
+    map['involved_characters_json'] = Variable<String>(involvedCharactersJson);
+    if (!nullToAbsent || resolvedChapterOrder != null) {
+      map['resolved_chapter_order'] = Variable<int>(resolvedChapterOrder);
+    }
+    if (!nullToAbsent || payoffDetail != null) {
+      map['payoff_detail'] = Variable<String>(payoffDetail);
+    }
     map['suggested_resolved'] = Variable<bool>(suggestedResolved);
     map['created_at'] = Variable<DateTime>(createdAt);
     return map;
@@ -4568,6 +6557,13 @@ class Foreshadowing extends DataClass implements Insertable<Foreshadowing> {
           : Value(plannedResolve),
       status: Value(status),
       note: note == null && nullToAbsent ? const Value.absent() : Value(note),
+      involvedCharactersJson: Value(involvedCharactersJson),
+      resolvedChapterOrder: resolvedChapterOrder == null && nullToAbsent
+          ? const Value.absent()
+          : Value(resolvedChapterOrder),
+      payoffDetail: payoffDetail == null && nullToAbsent
+          ? const Value.absent()
+          : Value(payoffDetail),
       suggestedResolved: Value(suggestedResolved),
       createdAt: Value(createdAt),
     );
@@ -4590,6 +6586,13 @@ class Foreshadowing extends DataClass implements Insertable<Foreshadowing> {
       plannedResolve: serializer.fromJson<String?>(json['plannedResolve']),
       status: serializer.fromJson<String>(json['status']),
       note: serializer.fromJson<String?>(json['note']),
+      involvedCharactersJson: serializer.fromJson<String>(
+        json['involvedCharactersJson'],
+      ),
+      resolvedChapterOrder: serializer.fromJson<int?>(
+        json['resolvedChapterOrder'],
+      ),
+      payoffDetail: serializer.fromJson<String?>(json['payoffDetail']),
       suggestedResolved: serializer.fromJson<bool>(json['suggestedResolved']),
       createdAt: serializer.fromJson<DateTime>(json['createdAt']),
     );
@@ -4607,6 +6610,11 @@ class Foreshadowing extends DataClass implements Insertable<Foreshadowing> {
       'plannedResolve': serializer.toJson<String?>(plannedResolve),
       'status': serializer.toJson<String>(status),
       'note': serializer.toJson<String?>(note),
+      'involvedCharactersJson': serializer.toJson<String>(
+        involvedCharactersJson,
+      ),
+      'resolvedChapterOrder': serializer.toJson<int?>(resolvedChapterOrder),
+      'payoffDetail': serializer.toJson<String?>(payoffDetail),
       'suggestedResolved': serializer.toJson<bool>(suggestedResolved),
       'createdAt': serializer.toJson<DateTime>(createdAt),
     };
@@ -4622,6 +6630,9 @@ class Foreshadowing extends DataClass implements Insertable<Foreshadowing> {
     Value<String?> plannedResolve = const Value.absent(),
     String? status,
     Value<String?> note = const Value.absent(),
+    String? involvedCharactersJson,
+    Value<int?> resolvedChapterOrder = const Value.absent(),
+    Value<String?> payoffDetail = const Value.absent(),
     bool? suggestedResolved,
     DateTime? createdAt,
   }) => Foreshadowing(
@@ -4640,6 +6651,12 @@ class Foreshadowing extends DataClass implements Insertable<Foreshadowing> {
         : this.plannedResolve,
     status: status ?? this.status,
     note: note.present ? note.value : this.note,
+    involvedCharactersJson:
+        involvedCharactersJson ?? this.involvedCharactersJson,
+    resolvedChapterOrder: resolvedChapterOrder.present
+        ? resolvedChapterOrder.value
+        : this.resolvedChapterOrder,
+    payoffDetail: payoffDetail.present ? payoffDetail.value : this.payoffDetail,
     suggestedResolved: suggestedResolved ?? this.suggestedResolved,
     createdAt: createdAt ?? this.createdAt,
   );
@@ -4660,6 +6677,15 @@ class Foreshadowing extends DataClass implements Insertable<Foreshadowing> {
           : this.plannedResolve,
       status: data.status.present ? data.status.value : this.status,
       note: data.note.present ? data.note.value : this.note,
+      involvedCharactersJson: data.involvedCharactersJson.present
+          ? data.involvedCharactersJson.value
+          : this.involvedCharactersJson,
+      resolvedChapterOrder: data.resolvedChapterOrder.present
+          ? data.resolvedChapterOrder.value
+          : this.resolvedChapterOrder,
+      payoffDetail: data.payoffDetail.present
+          ? data.payoffDetail.value
+          : this.payoffDetail,
       suggestedResolved: data.suggestedResolved.present
           ? data.suggestedResolved.value
           : this.suggestedResolved,
@@ -4679,6 +6705,9 @@ class Foreshadowing extends DataClass implements Insertable<Foreshadowing> {
           ..write('plannedResolve: $plannedResolve, ')
           ..write('status: $status, ')
           ..write('note: $note, ')
+          ..write('involvedCharactersJson: $involvedCharactersJson, ')
+          ..write('resolvedChapterOrder: $resolvedChapterOrder, ')
+          ..write('payoffDetail: $payoffDetail, ')
           ..write('suggestedResolved: $suggestedResolved, ')
           ..write('createdAt: $createdAt')
           ..write(')'))
@@ -4696,6 +6725,9 @@ class Foreshadowing extends DataClass implements Insertable<Foreshadowing> {
     plannedResolve,
     status,
     note,
+    involvedCharactersJson,
+    resolvedChapterOrder,
+    payoffDetail,
     suggestedResolved,
     createdAt,
   );
@@ -4712,6 +6744,9 @@ class Foreshadowing extends DataClass implements Insertable<Foreshadowing> {
           other.plannedResolve == this.plannedResolve &&
           other.status == this.status &&
           other.note == this.note &&
+          other.involvedCharactersJson == this.involvedCharactersJson &&
+          other.resolvedChapterOrder == this.resolvedChapterOrder &&
+          other.payoffDetail == this.payoffDetail &&
           other.suggestedResolved == this.suggestedResolved &&
           other.createdAt == this.createdAt);
 }
@@ -4726,6 +6761,9 @@ class ForeshadowingsCompanion extends UpdateCompanion<Foreshadowing> {
   final Value<String?> plannedResolve;
   final Value<String> status;
   final Value<String?> note;
+  final Value<String> involvedCharactersJson;
+  final Value<int?> resolvedChapterOrder;
+  final Value<String?> payoffDetail;
   final Value<bool> suggestedResolved;
   final Value<DateTime> createdAt;
   final Value<int> rowid;
@@ -4739,6 +6777,9 @@ class ForeshadowingsCompanion extends UpdateCompanion<Foreshadowing> {
     this.plannedResolve = const Value.absent(),
     this.status = const Value.absent(),
     this.note = const Value.absent(),
+    this.involvedCharactersJson = const Value.absent(),
+    this.resolvedChapterOrder = const Value.absent(),
+    this.payoffDetail = const Value.absent(),
     this.suggestedResolved = const Value.absent(),
     this.createdAt = const Value.absent(),
     this.rowid = const Value.absent(),
@@ -4753,6 +6794,9 @@ class ForeshadowingsCompanion extends UpdateCompanion<Foreshadowing> {
     this.plannedResolve = const Value.absent(),
     this.status = const Value.absent(),
     this.note = const Value.absent(),
+    this.involvedCharactersJson = const Value.absent(),
+    this.resolvedChapterOrder = const Value.absent(),
+    this.payoffDetail = const Value.absent(),
     this.suggestedResolved = const Value.absent(),
     required DateTime createdAt,
     this.rowid = const Value.absent(),
@@ -4770,6 +6814,9 @@ class ForeshadowingsCompanion extends UpdateCompanion<Foreshadowing> {
     Expression<String>? plannedResolve,
     Expression<String>? status,
     Expression<String>? note,
+    Expression<String>? involvedCharactersJson,
+    Expression<int>? resolvedChapterOrder,
+    Expression<String>? payoffDetail,
     Expression<bool>? suggestedResolved,
     Expression<DateTime>? createdAt,
     Expression<int>? rowid,
@@ -4786,6 +6833,11 @@ class ForeshadowingsCompanion extends UpdateCompanion<Foreshadowing> {
       if (plannedResolve != null) 'planned_resolve': plannedResolve,
       if (status != null) 'status': status,
       if (note != null) 'note': note,
+      if (involvedCharactersJson != null)
+        'involved_characters_json': involvedCharactersJson,
+      if (resolvedChapterOrder != null)
+        'resolved_chapter_order': resolvedChapterOrder,
+      if (payoffDetail != null) 'payoff_detail': payoffDetail,
       if (suggestedResolved != null) 'suggested_resolved': suggestedResolved,
       if (createdAt != null) 'created_at': createdAt,
       if (rowid != null) 'rowid': rowid,
@@ -4802,6 +6854,9 @@ class ForeshadowingsCompanion extends UpdateCompanion<Foreshadowing> {
     Value<String?>? plannedResolve,
     Value<String>? status,
     Value<String?>? note,
+    Value<String>? involvedCharactersJson,
+    Value<int?>? resolvedChapterOrder,
+    Value<String?>? payoffDetail,
     Value<bool>? suggestedResolved,
     Value<DateTime>? createdAt,
     Value<int>? rowid,
@@ -4816,6 +6871,10 @@ class ForeshadowingsCompanion extends UpdateCompanion<Foreshadowing> {
       plannedResolve: plannedResolve ?? this.plannedResolve,
       status: status ?? this.status,
       note: note ?? this.note,
+      involvedCharactersJson:
+          involvedCharactersJson ?? this.involvedCharactersJson,
+      resolvedChapterOrder: resolvedChapterOrder ?? this.resolvedChapterOrder,
+      payoffDetail: payoffDetail ?? this.payoffDetail,
       suggestedResolved: suggestedResolved ?? this.suggestedResolved,
       createdAt: createdAt ?? this.createdAt,
       rowid: rowid ?? this.rowid,
@@ -4852,6 +6911,17 @@ class ForeshadowingsCompanion extends UpdateCompanion<Foreshadowing> {
     if (note.present) {
       map['note'] = Variable<String>(note.value);
     }
+    if (involvedCharactersJson.present) {
+      map['involved_characters_json'] = Variable<String>(
+        involvedCharactersJson.value,
+      );
+    }
+    if (resolvedChapterOrder.present) {
+      map['resolved_chapter_order'] = Variable<int>(resolvedChapterOrder.value);
+    }
+    if (payoffDetail.present) {
+      map['payoff_detail'] = Variable<String>(payoffDetail.value);
+    }
     if (suggestedResolved.present) {
       map['suggested_resolved'] = Variable<bool>(suggestedResolved.value);
     }
@@ -4876,6 +6946,9 @@ class ForeshadowingsCompanion extends UpdateCompanion<Foreshadowing> {
           ..write('plannedResolve: $plannedResolve, ')
           ..write('status: $status, ')
           ..write('note: $note, ')
+          ..write('involvedCharactersJson: $involvedCharactersJson, ')
+          ..write('resolvedChapterOrder: $resolvedChapterOrder, ')
+          ..write('payoffDetail: $payoffDetail, ')
           ..write('suggestedResolved: $suggestedResolved, ')
           ..write('createdAt: $createdAt, ')
           ..write('rowid: $rowid')
@@ -9845,6 +11918,9 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     this,
   );
   late final $CharactersTable characters = $CharactersTable(this);
+  late final $CharacterRelationsTable characterRelations =
+      $CharacterRelationsTable(this);
+  late final $TimelineEventsTable timelineEvents = $TimelineEventsTable(this);
   late final $WorldEntriesTable worldEntries = $WorldEntriesTable(this);
   late final $ForeshadowingsTable foreshadowings = $ForeshadowingsTable(this);
   late final $ChatThreadsTable chatThreads = $ChatThreadsTable(this);
@@ -9876,6 +11952,8 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     chapterSummaries,
     chapterSnapshots,
     characters,
+    characterRelations,
+    timelineEvents,
     worldEntries,
     foreshadowings,
     chatThreads,
@@ -9928,6 +12006,34 @@ abstract class _$AppDatabase extends GeneratedDatabase {
         limitUpdateKind: UpdateKind.delete,
       ),
       result: [TableUpdate('characters', kind: UpdateKind.delete)],
+    ),
+    WritePropagation(
+      on: TableUpdateQuery.onTableName(
+        'novels',
+        limitUpdateKind: UpdateKind.delete,
+      ),
+      result: [TableUpdate('character_relations', kind: UpdateKind.delete)],
+    ),
+    WritePropagation(
+      on: TableUpdateQuery.onTableName(
+        'characters',
+        limitUpdateKind: UpdateKind.delete,
+      ),
+      result: [TableUpdate('character_relations', kind: UpdateKind.delete)],
+    ),
+    WritePropagation(
+      on: TableUpdateQuery.onTableName(
+        'characters',
+        limitUpdateKind: UpdateKind.delete,
+      ),
+      result: [TableUpdate('character_relations', kind: UpdateKind.delete)],
+    ),
+    WritePropagation(
+      on: TableUpdateQuery.onTableName(
+        'novels',
+        limitUpdateKind: UpdateKind.delete,
+      ),
+      result: [TableUpdate('timeline_events', kind: UpdateKind.delete)],
     ),
     WritePropagation(
       on: TableUpdateQuery.onTableName(
@@ -10040,6 +12146,45 @@ final class $$NovelsTableReferences
     ).filter((f) => f.novelId.id.sqlEquals($_itemColumn<String>('id')!));
 
     final cache = $_typedResult.readTableOrNull(_charactersRefsTable($_db));
+    return ProcessedTableManager(
+      manager.$state.copyWith(prefetchedData: cache),
+    );
+  }
+
+  static MultiTypedResultKey<$CharacterRelationsTable, List<CharacterRelation>>
+  _characterRelationsRefsTable(_$AppDatabase db) =>
+      MultiTypedResultKey.fromTable(
+        db.characterRelations,
+        aliasName: 'novels__id__character_relations__novel_id',
+      );
+
+  $$CharacterRelationsTableProcessedTableManager get characterRelationsRefs {
+    final manager = $$CharacterRelationsTableTableManager(
+      $_db,
+      $_db.characterRelations,
+    ).filter((f) => f.novelId.id.sqlEquals($_itemColumn<String>('id')!));
+
+    final cache = $_typedResult.readTableOrNull(
+      _characterRelationsRefsTable($_db),
+    );
+    return ProcessedTableManager(
+      manager.$state.copyWith(prefetchedData: cache),
+    );
+  }
+
+  static MultiTypedResultKey<$TimelineEventsTable, List<TimelineEvent>>
+  _timelineEventsRefsTable(_$AppDatabase db) => MultiTypedResultKey.fromTable(
+    db.timelineEvents,
+    aliasName: 'novels__id__timeline_events__novel_id',
+  );
+
+  $$TimelineEventsTableProcessedTableManager get timelineEventsRefs {
+    final manager = $$TimelineEventsTableTableManager(
+      $_db,
+      $_db.timelineEvents,
+    ).filter((f) => f.novelId.id.sqlEquals($_itemColumn<String>('id')!));
+
+    final cache = $_typedResult.readTableOrNull(_timelineEventsRefsTable($_db));
     return ProcessedTableManager(
       manager.$state.copyWith(prefetchedData: cache),
     );
@@ -10225,6 +12370,56 @@ class $$NovelsTableFilterComposer
           }) => $$CharactersTableFilterComposer(
             $db: $db,
             $table: $db.characters,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return f(composer);
+  }
+
+  Expression<bool> characterRelationsRefs(
+    Expression<bool> Function($$CharacterRelationsTableFilterComposer f) f,
+  ) {
+    final $$CharacterRelationsTableFilterComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.id,
+      referencedTable: $db.characterRelations,
+      getReferencedColumn: (t) => t.novelId,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$CharacterRelationsTableFilterComposer(
+            $db: $db,
+            $table: $db.characterRelations,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return f(composer);
+  }
+
+  Expression<bool> timelineEventsRefs(
+    Expression<bool> Function($$TimelineEventsTableFilterComposer f) f,
+  ) {
+    final $$TimelineEventsTableFilterComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.id,
+      referencedTable: $db.timelineEvents,
+      getReferencedColumn: (t) => t.novelId,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$TimelineEventsTableFilterComposer(
+            $db: $db,
+            $table: $db.timelineEvents,
             $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
             joinBuilder: joinBuilder,
             $removeJoinBuilderFromRootComposer:
@@ -10517,6 +12712,57 @@ class $$NovelsTableAnnotationComposer
     return f(composer);
   }
 
+  Expression<T> characterRelationsRefs<T extends Object>(
+    Expression<T> Function($$CharacterRelationsTableAnnotationComposer a) f,
+  ) {
+    final $$CharacterRelationsTableAnnotationComposer composer =
+        $composerBuilder(
+          composer: this,
+          getCurrentColumn: (t) => t.id,
+          referencedTable: $db.characterRelations,
+          getReferencedColumn: (t) => t.novelId,
+          builder:
+              (
+                joinBuilder, {
+                $addJoinBuilderToRootComposer,
+                $removeJoinBuilderFromRootComposer,
+              }) => $$CharacterRelationsTableAnnotationComposer(
+                $db: $db,
+                $table: $db.characterRelations,
+                $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+                joinBuilder: joinBuilder,
+                $removeJoinBuilderFromRootComposer:
+                    $removeJoinBuilderFromRootComposer,
+              ),
+        );
+    return f(composer);
+  }
+
+  Expression<T> timelineEventsRefs<T extends Object>(
+    Expression<T> Function($$TimelineEventsTableAnnotationComposer a) f,
+  ) {
+    final $$TimelineEventsTableAnnotationComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.id,
+      referencedTable: $db.timelineEvents,
+      getReferencedColumn: (t) => t.novelId,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$TimelineEventsTableAnnotationComposer(
+            $db: $db,
+            $table: $db.timelineEvents,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return f(composer);
+  }
+
   Expression<T> worldEntriesRefs<T extends Object>(
     Expression<T> Function($$WorldEntriesTableAnnotationComposer a) f,
   ) {
@@ -10609,6 +12855,8 @@ class $$NovelsTableTableManager
           PrefetchHooks Function({
             bool volumesRefs,
             bool charactersRefs,
+            bool characterRelationsRefs,
+            bool timelineEventsRefs,
             bool worldEntriesRefs,
             bool foreshadowingsRefs,
             bool chatThreadsRefs,
@@ -10709,6 +12957,8 @@ class $$NovelsTableTableManager
               ({
                 volumesRefs = false,
                 charactersRefs = false,
+                characterRelationsRefs = false,
+                timelineEventsRefs = false,
                 worldEntriesRefs = false,
                 foreshadowingsRefs = false,
                 chatThreadsRefs = false,
@@ -10718,6 +12968,8 @@ class $$NovelsTableTableManager
                   explicitlyWatchedTables: [
                     if (volumesRefs) db.volumes,
                     if (charactersRefs) db.characters,
+                    if (characterRelationsRefs) db.characterRelations,
+                    if (timelineEventsRefs) db.timelineEvents,
                     if (worldEntriesRefs) db.worldEntries,
                     if (foreshadowingsRefs) db.foreshadowings,
                     if (chatThreadsRefs) db.chatThreads,
@@ -10761,6 +13013,46 @@ class $$NovelsTableTableManager
                                 table,
                                 p0,
                               ).charactersRefs,
+                          currentColumn: 'id',
+                          referencedColumn: 'novel_id',
+                          typedResults: items,
+                        ),
+                      if (characterRelationsRefs)
+                        await $_getPrefetchedDataByColumns<
+                          Novel,
+                          $NovelsTable,
+                          CharacterRelation,
+                          $CharacterRelationsTable
+                        >(
+                          currentTable: table,
+                          referencedTable: $$NovelsTableReferences
+                              ._characterRelationsRefsTable(db),
+                          managerFromTypedResult: (p0) =>
+                              $$NovelsTableReferences(
+                                db,
+                                table,
+                                p0,
+                              ).characterRelationsRefs,
+                          currentColumn: 'id',
+                          referencedColumn: 'novel_id',
+                          typedResults: items,
+                        ),
+                      if (timelineEventsRefs)
+                        await $_getPrefetchedDataByColumns<
+                          Novel,
+                          $NovelsTable,
+                          TimelineEvent,
+                          $TimelineEventsTable
+                        >(
+                          currentTable: table,
+                          referencedTable: $$NovelsTableReferences
+                              ._timelineEventsRefsTable(db),
+                          managerFromTypedResult: (p0) =>
+                              $$NovelsTableReferences(
+                                db,
+                                table,
+                                p0,
+                              ).timelineEventsRefs,
                           currentColumn: 'id',
                           referencedColumn: 'novel_id',
                           typedResults: items,
@@ -10848,6 +13140,8 @@ typedef $$NovelsTableProcessedTableManager =
       PrefetchHooks Function({
         bool volumesRefs,
         bool charactersRefs,
+        bool characterRelationsRefs,
+        bool timelineEventsRefs,
         bool worldEntriesRefs,
         bool foreshadowingsRefs,
         bool chatThreadsRefs,
@@ -12592,6 +14886,9 @@ typedef $$CharactersTableCreateCompanionBuilder = CharactersCompanion Function({
   Value<String?> physicalState,
   Value<String?> mentalState,
   Value<String?> lastSeenChapterTitle,
+  Value<String?> camp,
+  Value<String?> role,
+  Value<String> arcJson,
   Value<bool> isSceneRelevant,
   Value<int> sortOrder,
   Value<int> rowid,
@@ -12609,6 +14906,9 @@ typedef $$CharactersTableUpdateCompanionBuilder = CharactersCompanion Function({
   Value<String?> physicalState,
   Value<String?> mentalState,
   Value<String?> lastSeenChapterTitle,
+  Value<String?> camp,
+  Value<String?> role,
+  Value<String> arcJson,
   Value<bool> isSceneRelevant,
   Value<int> sortOrder,
   Value<int> rowid,
@@ -12697,6 +14997,21 @@ class $$CharactersTableFilterComposer
 
   ColumnFilters<String> get lastSeenChapterTitle => $composableBuilder(
     column: $table.lastSeenChapterTitle,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get camp => $composableBuilder(
+    column: $table.camp,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get role => $composableBuilder(
+    column: $table.role,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get arcJson => $composableBuilder(
+    column: $table.arcJson,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -12798,6 +15113,21 @@ class $$CharactersTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<String> get camp => $composableBuilder(
+    column: $table.camp,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get role => $composableBuilder(
+    column: $table.role,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get arcJson => $composableBuilder(
+    column: $table.arcJson,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   ColumnOrderings<bool> get isSceneRelevant => $composableBuilder(
     column: $table.isSceneRelevant,
     builder: (column) => ColumnOrderings(column),
@@ -12892,6 +15222,15 @@ class $$CharactersTableAnnotationComposer
     builder: (column) => column,
   );
 
+  GeneratedColumn<String> get camp =>
+      $composableBuilder(column: $table.camp, builder: (column) => column);
+
+  GeneratedColumn<String> get role =>
+      $composableBuilder(column: $table.role, builder: (column) => column);
+
+  GeneratedColumn<String> get arcJson =>
+      $composableBuilder(column: $table.arcJson, builder: (column) => column);
+
   GeneratedColumn<bool> get isSceneRelevant => $composableBuilder(
     column: $table.isSceneRelevant,
     builder: (column) => column,
@@ -12964,6 +15303,9 @@ class $$CharactersTableTableManager
                 Value<String?> physicalState = const Value.absent(),
                 Value<String?> mentalState = const Value.absent(),
                 Value<String?> lastSeenChapterTitle = const Value.absent(),
+                Value<String?> camp = const Value.absent(),
+                Value<String?> role = const Value.absent(),
+                Value<String> arcJson = const Value.absent(),
                 Value<bool> isSceneRelevant = const Value.absent(),
                 Value<int> sortOrder = const Value.absent(),
                 Value<int> rowid = const Value.absent(),
@@ -12980,6 +15322,9 @@ class $$CharactersTableTableManager
                 physicalState: physicalState,
                 mentalState: mentalState,
                 lastSeenChapterTitle: lastSeenChapterTitle,
+                camp: camp,
+                role: role,
+                arcJson: arcJson,
                 isSceneRelevant: isSceneRelevant,
                 sortOrder: sortOrder,
                 rowid: rowid,
@@ -12998,6 +15343,9 @@ class $$CharactersTableTableManager
                 Value<String?> physicalState = const Value.absent(),
                 Value<String?> mentalState = const Value.absent(),
                 Value<String?> lastSeenChapterTitle = const Value.absent(),
+                Value<String?> camp = const Value.absent(),
+                Value<String?> role = const Value.absent(),
+                Value<String> arcJson = const Value.absent(),
                 Value<bool> isSceneRelevant = const Value.absent(),
                 Value<int> sortOrder = const Value.absent(),
                 Value<int> rowid = const Value.absent(),
@@ -13014,6 +15362,9 @@ class $$CharactersTableTableManager
                 physicalState: physicalState,
                 mentalState: mentalState,
                 lastSeenChapterTitle: lastSeenChapterTitle,
+                camp: camp,
+                role: role,
+                arcJson: arcJson,
                 isSceneRelevant: isSceneRelevant,
                 sortOrder: sortOrder,
                 rowid: rowid,
@@ -13081,6 +15432,1246 @@ typedef $$CharactersTableProcessedTableManager =
       $$CharactersTableUpdateCompanionBuilder,
       (Character, $$CharactersTableReferences),
       Character,
+      PrefetchHooks Function({bool novelId})
+    >;
+typedef $$CharacterRelationsTableCreateCompanionBuilder =
+    CharacterRelationsCompanion Function({
+      required String id,
+      required String novelId,
+      required String sourceCharacterId,
+      required String targetCharacterId,
+      Value<String> relationType,
+      required String label,
+      Value<String> description,
+      Value<int> strength,
+      Value<String> line,
+      Value<String> status,
+      Value<String> evolutionJson,
+      Value<int?> firstChapterOrder,
+      Value<int?> lastChapterOrder,
+      required DateTime updatedAt,
+      Value<int> rowid,
+    });
+typedef $$CharacterRelationsTableUpdateCompanionBuilder =
+    CharacterRelationsCompanion Function({
+      Value<String> id,
+      Value<String> novelId,
+      Value<String> sourceCharacterId,
+      Value<String> targetCharacterId,
+      Value<String> relationType,
+      Value<String> label,
+      Value<String> description,
+      Value<int> strength,
+      Value<String> line,
+      Value<String> status,
+      Value<String> evolutionJson,
+      Value<int?> firstChapterOrder,
+      Value<int?> lastChapterOrder,
+      Value<DateTime> updatedAt,
+      Value<int> rowid,
+    });
+
+final class $$CharacterRelationsTableReferences
+    extends
+        BaseReferences<
+          _$AppDatabase,
+          $CharacterRelationsTable,
+          CharacterRelation
+        > {
+  $$CharacterRelationsTableReferences(
+    super.$_db,
+    super.$_table,
+    super.$_typedResult,
+  );
+
+  static $NovelsTable _novelIdTable(_$AppDatabase db) =>
+      db.novels.createAlias('character_relations__novel_id__novels__id');
+
+  $$NovelsTableProcessedTableManager get novelId {
+    final $_column = $_itemColumn<String>('novel_id')!;
+
+    final manager = $$NovelsTableTableManager(
+      $_db,
+      $_db.novels,
+    ).filter((f) => f.id.sqlEquals($_column));
+    final item = $_typedResult.readTableOrNull(_novelIdTable($_db));
+    if (item == null) return manager;
+    return ProcessedTableManager(
+      manager.$state.copyWith(prefetchedData: [item]),
+    );
+  }
+
+  static $CharactersTable _sourceCharacterIdTable(_$AppDatabase db) => db
+      .characters
+      .createAlias('character_relations__source_character_id__characters__id');
+
+  $$CharactersTableProcessedTableManager get sourceCharacterId {
+    final $_column = $_itemColumn<String>('source_character_id')!;
+
+    final manager = $$CharactersTableTableManager(
+      $_db,
+      $_db.characters,
+    ).filter((f) => f.id.sqlEquals($_column));
+    final item = $_typedResult.readTableOrNull(_sourceCharacterIdTable($_db));
+    if (item == null) return manager;
+    return ProcessedTableManager(
+      manager.$state.copyWith(prefetchedData: [item]),
+    );
+  }
+
+  static $CharactersTable _targetCharacterIdTable(_$AppDatabase db) => db
+      .characters
+      .createAlias('character_relations__target_character_id__characters__id');
+
+  $$CharactersTableProcessedTableManager get targetCharacterId {
+    final $_column = $_itemColumn<String>('target_character_id')!;
+
+    final manager = $$CharactersTableTableManager(
+      $_db,
+      $_db.characters,
+    ).filter((f) => f.id.sqlEquals($_column));
+    final item = $_typedResult.readTableOrNull(_targetCharacterIdTable($_db));
+    if (item == null) return manager;
+    return ProcessedTableManager(
+      manager.$state.copyWith(prefetchedData: [item]),
+    );
+  }
+}
+
+class $$CharacterRelationsTableFilterComposer
+    extends Composer<_$AppDatabase, $CharacterRelationsTable> {
+  $$CharacterRelationsTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<String> get id => $composableBuilder(
+    column: $table.id,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get relationType => $composableBuilder(
+    column: $table.relationType,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get label => $composableBuilder(
+    column: $table.label,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get description => $composableBuilder(
+    column: $table.description,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get strength => $composableBuilder(
+    column: $table.strength,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get line => $composableBuilder(
+    column: $table.line,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get status => $composableBuilder(
+    column: $table.status,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get evolutionJson => $composableBuilder(
+    column: $table.evolutionJson,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get firstChapterOrder => $composableBuilder(
+    column: $table.firstChapterOrder,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get lastChapterOrder => $composableBuilder(
+    column: $table.lastChapterOrder,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<DateTime> get updatedAt => $composableBuilder(
+    column: $table.updatedAt,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  $$NovelsTableFilterComposer get novelId {
+    final $$NovelsTableFilterComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.novelId,
+      referencedTable: $db.novels,
+      getReferencedColumn: (t) => t.id,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$NovelsTableFilterComposer(
+            $db: $db,
+            $table: $db.novels,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return composer;
+  }
+
+  $$CharactersTableFilterComposer get sourceCharacterId {
+    final $$CharactersTableFilterComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.sourceCharacterId,
+      referencedTable: $db.characters,
+      getReferencedColumn: (t) => t.id,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$CharactersTableFilterComposer(
+            $db: $db,
+            $table: $db.characters,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return composer;
+  }
+
+  $$CharactersTableFilterComposer get targetCharacterId {
+    final $$CharactersTableFilterComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.targetCharacterId,
+      referencedTable: $db.characters,
+      getReferencedColumn: (t) => t.id,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$CharactersTableFilterComposer(
+            $db: $db,
+            $table: $db.characters,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return composer;
+  }
+}
+
+class $$CharacterRelationsTableOrderingComposer
+    extends Composer<_$AppDatabase, $CharacterRelationsTable> {
+  $$CharacterRelationsTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<String> get id => $composableBuilder(
+    column: $table.id,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get relationType => $composableBuilder(
+    column: $table.relationType,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get label => $composableBuilder(
+    column: $table.label,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get description => $composableBuilder(
+    column: $table.description,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get strength => $composableBuilder(
+    column: $table.strength,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get line => $composableBuilder(
+    column: $table.line,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get status => $composableBuilder(
+    column: $table.status,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get evolutionJson => $composableBuilder(
+    column: $table.evolutionJson,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get firstChapterOrder => $composableBuilder(
+    column: $table.firstChapterOrder,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get lastChapterOrder => $composableBuilder(
+    column: $table.lastChapterOrder,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<DateTime> get updatedAt => $composableBuilder(
+    column: $table.updatedAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  $$NovelsTableOrderingComposer get novelId {
+    final $$NovelsTableOrderingComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.novelId,
+      referencedTable: $db.novels,
+      getReferencedColumn: (t) => t.id,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$NovelsTableOrderingComposer(
+            $db: $db,
+            $table: $db.novels,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return composer;
+  }
+
+  $$CharactersTableOrderingComposer get sourceCharacterId {
+    final $$CharactersTableOrderingComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.sourceCharacterId,
+      referencedTable: $db.characters,
+      getReferencedColumn: (t) => t.id,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$CharactersTableOrderingComposer(
+            $db: $db,
+            $table: $db.characters,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return composer;
+  }
+
+  $$CharactersTableOrderingComposer get targetCharacterId {
+    final $$CharactersTableOrderingComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.targetCharacterId,
+      referencedTable: $db.characters,
+      getReferencedColumn: (t) => t.id,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$CharactersTableOrderingComposer(
+            $db: $db,
+            $table: $db.characters,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return composer;
+  }
+}
+
+class $$CharacterRelationsTableAnnotationComposer
+    extends Composer<_$AppDatabase, $CharacterRelationsTable> {
+  $$CharacterRelationsTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<String> get id =>
+      $composableBuilder(column: $table.id, builder: (column) => column);
+
+  GeneratedColumn<String> get relationType => $composableBuilder(
+    column: $table.relationType,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get label =>
+      $composableBuilder(column: $table.label, builder: (column) => column);
+
+  GeneratedColumn<String> get description => $composableBuilder(
+    column: $table.description,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<int> get strength =>
+      $composableBuilder(column: $table.strength, builder: (column) => column);
+
+  GeneratedColumn<String> get line =>
+      $composableBuilder(column: $table.line, builder: (column) => column);
+
+  GeneratedColumn<String> get status =>
+      $composableBuilder(column: $table.status, builder: (column) => column);
+
+  GeneratedColumn<String> get evolutionJson => $composableBuilder(
+    column: $table.evolutionJson,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<int> get firstChapterOrder => $composableBuilder(
+    column: $table.firstChapterOrder,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<int> get lastChapterOrder => $composableBuilder(
+    column: $table.lastChapterOrder,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<DateTime> get updatedAt =>
+      $composableBuilder(column: $table.updatedAt, builder: (column) => column);
+
+  $$NovelsTableAnnotationComposer get novelId {
+    final $$NovelsTableAnnotationComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.novelId,
+      referencedTable: $db.novels,
+      getReferencedColumn: (t) => t.id,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$NovelsTableAnnotationComposer(
+            $db: $db,
+            $table: $db.novels,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return composer;
+  }
+
+  $$CharactersTableAnnotationComposer get sourceCharacterId {
+    final $$CharactersTableAnnotationComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.sourceCharacterId,
+      referencedTable: $db.characters,
+      getReferencedColumn: (t) => t.id,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$CharactersTableAnnotationComposer(
+            $db: $db,
+            $table: $db.characters,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return composer;
+  }
+
+  $$CharactersTableAnnotationComposer get targetCharacterId {
+    final $$CharactersTableAnnotationComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.targetCharacterId,
+      referencedTable: $db.characters,
+      getReferencedColumn: (t) => t.id,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$CharactersTableAnnotationComposer(
+            $db: $db,
+            $table: $db.characters,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return composer;
+  }
+}
+
+class $$CharacterRelationsTableTableManager
+    extends
+        RootTableManager<
+          _$AppDatabase,
+          $CharacterRelationsTable,
+          CharacterRelation,
+          $$CharacterRelationsTableFilterComposer,
+          $$CharacterRelationsTableOrderingComposer,
+          $$CharacterRelationsTableAnnotationComposer,
+          $$CharacterRelationsTableCreateCompanionBuilder,
+          $$CharacterRelationsTableUpdateCompanionBuilder,
+          (CharacterRelation, $$CharacterRelationsTableReferences),
+          CharacterRelation,
+          PrefetchHooks Function({
+            bool novelId,
+            bool sourceCharacterId,
+            bool targetCharacterId,
+          })
+        > {
+  $$CharacterRelationsTableTableManager(
+    _$AppDatabase db,
+    $CharacterRelationsTable table,
+  ) : super(
+        TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$CharacterRelationsTableFilterComposer($db: db, $table: table),
+          createOrderingComposer: () =>
+              $$CharacterRelationsTableOrderingComposer($db: db, $table: table),
+          createComputedFieldComposer: () =>
+              $$CharacterRelationsTableAnnotationComposer(
+                $db: db,
+                $table: table,
+              ),
+          updateCompanionCallback:
+              ({
+                Value<String> id = const Value.absent(),
+                Value<String> novelId = const Value.absent(),
+                Value<String> sourceCharacterId = const Value.absent(),
+                Value<String> targetCharacterId = const Value.absent(),
+                Value<String> relationType = const Value.absent(),
+                Value<String> label = const Value.absent(),
+                Value<String> description = const Value.absent(),
+                Value<int> strength = const Value.absent(),
+                Value<String> line = const Value.absent(),
+                Value<String> status = const Value.absent(),
+                Value<String> evolutionJson = const Value.absent(),
+                Value<int?> firstChapterOrder = const Value.absent(),
+                Value<int?> lastChapterOrder = const Value.absent(),
+                Value<DateTime> updatedAt = const Value.absent(),
+                Value<int> rowid = const Value.absent(),
+              }) => CharacterRelationsCompanion(
+                id: id,
+                novelId: novelId,
+                sourceCharacterId: sourceCharacterId,
+                targetCharacterId: targetCharacterId,
+                relationType: relationType,
+                label: label,
+                description: description,
+                strength: strength,
+                line: line,
+                status: status,
+                evolutionJson: evolutionJson,
+                firstChapterOrder: firstChapterOrder,
+                lastChapterOrder: lastChapterOrder,
+                updatedAt: updatedAt,
+                rowid: rowid,
+              ),
+          createCompanionCallback:
+              ({
+                required String id,
+                required String novelId,
+                required String sourceCharacterId,
+                required String targetCharacterId,
+                Value<String> relationType = const Value.absent(),
+                required String label,
+                Value<String> description = const Value.absent(),
+                Value<int> strength = const Value.absent(),
+                Value<String> line = const Value.absent(),
+                Value<String> status = const Value.absent(),
+                Value<String> evolutionJson = const Value.absent(),
+                Value<int?> firstChapterOrder = const Value.absent(),
+                Value<int?> lastChapterOrder = const Value.absent(),
+                required DateTime updatedAt,
+                Value<int> rowid = const Value.absent(),
+              }) => CharacterRelationsCompanion.insert(
+                id: id,
+                novelId: novelId,
+                sourceCharacterId: sourceCharacterId,
+                targetCharacterId: targetCharacterId,
+                relationType: relationType,
+                label: label,
+                description: description,
+                strength: strength,
+                line: line,
+                status: status,
+                evolutionJson: evolutionJson,
+                firstChapterOrder: firstChapterOrder,
+                lastChapterOrder: lastChapterOrder,
+                updatedAt: updatedAt,
+                rowid: rowid,
+              ),
+          withReferenceMapper: (p0) => p0
+              .map(
+                (e) => (
+                  e.readTable<$CharacterRelationsTable, CharacterRelation>(
+                    table,
+                  ),
+                  $$CharacterRelationsTableReferences(db, table, e),
+                ),
+              )
+              .toList(),
+          prefetchHooksCallback:
+              ({
+                novelId = false,
+                sourceCharacterId = false,
+                targetCharacterId = false,
+              }) {
+                return PrefetchHooks(
+                  db: db,
+                  explicitlyWatchedTables: [],
+                  addJoins:
+                      <
+                        T extends TableManagerState<
+                          dynamic,
+                          dynamic,
+                          dynamic,
+                          dynamic,
+                          dynamic,
+                          dynamic,
+                          dynamic,
+                          dynamic,
+                          dynamic,
+                          dynamic,
+                          dynamic
+                        >
+                      >(state) {
+                        if (novelId) {
+                          state = state.withJoin(
+                            currentTable: table,
+                            currentColumn: table.novelId,
+                            referencedTable: $$CharacterRelationsTableReferences
+                                ._novelIdTable(db),
+                            referencedColumn:
+                                $$CharacterRelationsTableReferences
+                                    ._novelIdTable(db)
+                                    .id,
+                          ) as T;
+                        }
+                        if (sourceCharacterId) {
+                          state = state.withJoin(
+                            currentTable: table,
+                            currentColumn: table.sourceCharacterId,
+                            referencedTable: $$CharacterRelationsTableReferences
+                                ._sourceCharacterIdTable(db),
+                            referencedColumn:
+                                $$CharacterRelationsTableReferences
+                                    ._sourceCharacterIdTable(db)
+                                    .id,
+                          ) as T;
+                        }
+                        if (targetCharacterId) {
+                          state = state.withJoin(
+                            currentTable: table,
+                            currentColumn: table.targetCharacterId,
+                            referencedTable: $$CharacterRelationsTableReferences
+                                ._targetCharacterIdTable(db),
+                            referencedColumn:
+                                $$CharacterRelationsTableReferences
+                                    ._targetCharacterIdTable(db)
+                                    .id,
+                          ) as T;
+                        }
+
+                        return state;
+                      },
+                  getPrefetchedDataCallback: (items) async {
+                    return [];
+                  },
+                );
+              },
+        ),
+      );
+}
+
+typedef $$CharacterRelationsTableProcessedTableManager =
+    ProcessedTableManager<
+      _$AppDatabase,
+      $CharacterRelationsTable,
+      CharacterRelation,
+      $$CharacterRelationsTableFilterComposer,
+      $$CharacterRelationsTableOrderingComposer,
+      $$CharacterRelationsTableAnnotationComposer,
+      $$CharacterRelationsTableCreateCompanionBuilder,
+      $$CharacterRelationsTableUpdateCompanionBuilder,
+      (CharacterRelation, $$CharacterRelationsTableReferences),
+      CharacterRelation,
+      PrefetchHooks Function({
+        bool novelId,
+        bool sourceCharacterId,
+        bool targetCharacterId,
+      })
+    >;
+typedef $$TimelineEventsTableCreateCompanionBuilder =
+    TimelineEventsCompanion Function({
+      required String id,
+      required String novelId,
+      Value<String?> volumeId,
+      Value<String?> chapterId,
+      Value<int?> chapterOrder,
+      Value<String?> chapterRange,
+      Value<String?> inWorldTime,
+      Value<String?> phase,
+      required String title,
+      Value<String> summary,
+      Value<String?> location,
+      Value<String> participantsJson,
+      Value<String> linkedForeshadowingIdsJson,
+      Value<String> importance,
+      Value<int> sortOrder,
+      required DateTime createdAt,
+      Value<int> rowid,
+    });
+typedef $$TimelineEventsTableUpdateCompanionBuilder =
+    TimelineEventsCompanion Function({
+      Value<String> id,
+      Value<String> novelId,
+      Value<String?> volumeId,
+      Value<String?> chapterId,
+      Value<int?> chapterOrder,
+      Value<String?> chapterRange,
+      Value<String?> inWorldTime,
+      Value<String?> phase,
+      Value<String> title,
+      Value<String> summary,
+      Value<String?> location,
+      Value<String> participantsJson,
+      Value<String> linkedForeshadowingIdsJson,
+      Value<String> importance,
+      Value<int> sortOrder,
+      Value<DateTime> createdAt,
+      Value<int> rowid,
+    });
+
+final class $$TimelineEventsTableReferences
+    extends BaseReferences<_$AppDatabase, $TimelineEventsTable, TimelineEvent> {
+  $$TimelineEventsTableReferences(
+    super.$_db,
+    super.$_table,
+    super.$_typedResult,
+  );
+
+  static $NovelsTable _novelIdTable(_$AppDatabase db) =>
+      db.novels.createAlias('timeline_events__novel_id__novels__id');
+
+  $$NovelsTableProcessedTableManager get novelId {
+    final $_column = $_itemColumn<String>('novel_id')!;
+
+    final manager = $$NovelsTableTableManager(
+      $_db,
+      $_db.novels,
+    ).filter((f) => f.id.sqlEquals($_column));
+    final item = $_typedResult.readTableOrNull(_novelIdTable($_db));
+    if (item == null) return manager;
+    return ProcessedTableManager(
+      manager.$state.copyWith(prefetchedData: [item]),
+    );
+  }
+}
+
+class $$TimelineEventsTableFilterComposer
+    extends Composer<_$AppDatabase, $TimelineEventsTable> {
+  $$TimelineEventsTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<String> get id => $composableBuilder(
+    column: $table.id,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get volumeId => $composableBuilder(
+    column: $table.volumeId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get chapterId => $composableBuilder(
+    column: $table.chapterId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get chapterOrder => $composableBuilder(
+    column: $table.chapterOrder,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get chapterRange => $composableBuilder(
+    column: $table.chapterRange,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get inWorldTime => $composableBuilder(
+    column: $table.inWorldTime,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get phase => $composableBuilder(
+    column: $table.phase,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get title => $composableBuilder(
+    column: $table.title,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get summary => $composableBuilder(
+    column: $table.summary,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get location => $composableBuilder(
+    column: $table.location,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get participantsJson => $composableBuilder(
+    column: $table.participantsJson,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get linkedForeshadowingIdsJson => $composableBuilder(
+    column: $table.linkedForeshadowingIdsJson,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get importance => $composableBuilder(
+    column: $table.importance,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get sortOrder => $composableBuilder(
+    column: $table.sortOrder,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<DateTime> get createdAt => $composableBuilder(
+    column: $table.createdAt,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  $$NovelsTableFilterComposer get novelId {
+    final $$NovelsTableFilterComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.novelId,
+      referencedTable: $db.novels,
+      getReferencedColumn: (t) => t.id,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$NovelsTableFilterComposer(
+            $db: $db,
+            $table: $db.novels,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return composer;
+  }
+}
+
+class $$TimelineEventsTableOrderingComposer
+    extends Composer<_$AppDatabase, $TimelineEventsTable> {
+  $$TimelineEventsTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<String> get id => $composableBuilder(
+    column: $table.id,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get volumeId => $composableBuilder(
+    column: $table.volumeId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get chapterId => $composableBuilder(
+    column: $table.chapterId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get chapterOrder => $composableBuilder(
+    column: $table.chapterOrder,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get chapterRange => $composableBuilder(
+    column: $table.chapterRange,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get inWorldTime => $composableBuilder(
+    column: $table.inWorldTime,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get phase => $composableBuilder(
+    column: $table.phase,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get title => $composableBuilder(
+    column: $table.title,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get summary => $composableBuilder(
+    column: $table.summary,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get location => $composableBuilder(
+    column: $table.location,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get participantsJson => $composableBuilder(
+    column: $table.participantsJson,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get linkedForeshadowingIdsJson => $composableBuilder(
+    column: $table.linkedForeshadowingIdsJson,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get importance => $composableBuilder(
+    column: $table.importance,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get sortOrder => $composableBuilder(
+    column: $table.sortOrder,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<DateTime> get createdAt => $composableBuilder(
+    column: $table.createdAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  $$NovelsTableOrderingComposer get novelId {
+    final $$NovelsTableOrderingComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.novelId,
+      referencedTable: $db.novels,
+      getReferencedColumn: (t) => t.id,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$NovelsTableOrderingComposer(
+            $db: $db,
+            $table: $db.novels,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return composer;
+  }
+}
+
+class $$TimelineEventsTableAnnotationComposer
+    extends Composer<_$AppDatabase, $TimelineEventsTable> {
+  $$TimelineEventsTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<String> get id =>
+      $composableBuilder(column: $table.id, builder: (column) => column);
+
+  GeneratedColumn<String> get volumeId =>
+      $composableBuilder(column: $table.volumeId, builder: (column) => column);
+
+  GeneratedColumn<String> get chapterId =>
+      $composableBuilder(column: $table.chapterId, builder: (column) => column);
+
+  GeneratedColumn<int> get chapterOrder => $composableBuilder(
+    column: $table.chapterOrder,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get chapterRange => $composableBuilder(
+    column: $table.chapterRange,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get inWorldTime => $composableBuilder(
+    column: $table.inWorldTime,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get phase =>
+      $composableBuilder(column: $table.phase, builder: (column) => column);
+
+  GeneratedColumn<String> get title =>
+      $composableBuilder(column: $table.title, builder: (column) => column);
+
+  GeneratedColumn<String> get summary =>
+      $composableBuilder(column: $table.summary, builder: (column) => column);
+
+  GeneratedColumn<String> get location =>
+      $composableBuilder(column: $table.location, builder: (column) => column);
+
+  GeneratedColumn<String> get participantsJson => $composableBuilder(
+    column: $table.participantsJson,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get linkedForeshadowingIdsJson => $composableBuilder(
+    column: $table.linkedForeshadowingIdsJson,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get importance => $composableBuilder(
+    column: $table.importance,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<int> get sortOrder =>
+      $composableBuilder(column: $table.sortOrder, builder: (column) => column);
+
+  GeneratedColumn<DateTime> get createdAt =>
+      $composableBuilder(column: $table.createdAt, builder: (column) => column);
+
+  $$NovelsTableAnnotationComposer get novelId {
+    final $$NovelsTableAnnotationComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.novelId,
+      referencedTable: $db.novels,
+      getReferencedColumn: (t) => t.id,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$NovelsTableAnnotationComposer(
+            $db: $db,
+            $table: $db.novels,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return composer;
+  }
+}
+
+class $$TimelineEventsTableTableManager
+    extends
+        RootTableManager<
+          _$AppDatabase,
+          $TimelineEventsTable,
+          TimelineEvent,
+          $$TimelineEventsTableFilterComposer,
+          $$TimelineEventsTableOrderingComposer,
+          $$TimelineEventsTableAnnotationComposer,
+          $$TimelineEventsTableCreateCompanionBuilder,
+          $$TimelineEventsTableUpdateCompanionBuilder,
+          (TimelineEvent, $$TimelineEventsTableReferences),
+          TimelineEvent,
+          PrefetchHooks Function({bool novelId})
+        > {
+  $$TimelineEventsTableTableManager(
+    _$AppDatabase db,
+    $TimelineEventsTable table,
+  ) : super(
+        TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$TimelineEventsTableFilterComposer($db: db, $table: table),
+          createOrderingComposer: () =>
+              $$TimelineEventsTableOrderingComposer($db: db, $table: table),
+          createComputedFieldComposer: () =>
+              $$TimelineEventsTableAnnotationComposer($db: db, $table: table),
+          updateCompanionCallback:
+              ({
+                Value<String> id = const Value.absent(),
+                Value<String> novelId = const Value.absent(),
+                Value<String?> volumeId = const Value.absent(),
+                Value<String?> chapterId = const Value.absent(),
+                Value<int?> chapterOrder = const Value.absent(),
+                Value<String?> chapterRange = const Value.absent(),
+                Value<String?> inWorldTime = const Value.absent(),
+                Value<String?> phase = const Value.absent(),
+                Value<String> title = const Value.absent(),
+                Value<String> summary = const Value.absent(),
+                Value<String?> location = const Value.absent(),
+                Value<String> participantsJson = const Value.absent(),
+                Value<String> linkedForeshadowingIdsJson = const Value.absent(),
+                Value<String> importance = const Value.absent(),
+                Value<int> sortOrder = const Value.absent(),
+                Value<DateTime> createdAt = const Value.absent(),
+                Value<int> rowid = const Value.absent(),
+              }) => TimelineEventsCompanion(
+                id: id,
+                novelId: novelId,
+                volumeId: volumeId,
+                chapterId: chapterId,
+                chapterOrder: chapterOrder,
+                chapterRange: chapterRange,
+                inWorldTime: inWorldTime,
+                phase: phase,
+                title: title,
+                summary: summary,
+                location: location,
+                participantsJson: participantsJson,
+                linkedForeshadowingIdsJson: linkedForeshadowingIdsJson,
+                importance: importance,
+                sortOrder: sortOrder,
+                createdAt: createdAt,
+                rowid: rowid,
+              ),
+          createCompanionCallback:
+              ({
+                required String id,
+                required String novelId,
+                Value<String?> volumeId = const Value.absent(),
+                Value<String?> chapterId = const Value.absent(),
+                Value<int?> chapterOrder = const Value.absent(),
+                Value<String?> chapterRange = const Value.absent(),
+                Value<String?> inWorldTime = const Value.absent(),
+                Value<String?> phase = const Value.absent(),
+                required String title,
+                Value<String> summary = const Value.absent(),
+                Value<String?> location = const Value.absent(),
+                Value<String> participantsJson = const Value.absent(),
+                Value<String> linkedForeshadowingIdsJson = const Value.absent(),
+                Value<String> importance = const Value.absent(),
+                Value<int> sortOrder = const Value.absent(),
+                required DateTime createdAt,
+                Value<int> rowid = const Value.absent(),
+              }) => TimelineEventsCompanion.insert(
+                id: id,
+                novelId: novelId,
+                volumeId: volumeId,
+                chapterId: chapterId,
+                chapterOrder: chapterOrder,
+                chapterRange: chapterRange,
+                inWorldTime: inWorldTime,
+                phase: phase,
+                title: title,
+                summary: summary,
+                location: location,
+                participantsJson: participantsJson,
+                linkedForeshadowingIdsJson: linkedForeshadowingIdsJson,
+                importance: importance,
+                sortOrder: sortOrder,
+                createdAt: createdAt,
+                rowid: rowid,
+              ),
+          withReferenceMapper: (p0) => p0
+              .map(
+                (e) => (
+                  e.readTable<$TimelineEventsTable, TimelineEvent>(table),
+                  $$TimelineEventsTableReferences(db, table, e),
+                ),
+              )
+              .toList(),
+          prefetchHooksCallback: ({novelId = false}) {
+            return PrefetchHooks(
+              db: db,
+              explicitlyWatchedTables: [],
+              addJoins:
+                  <
+                    T extends TableManagerState<
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic
+                    >
+                  >(state) {
+                    if (novelId) {
+                      state = state.withJoin(
+                        currentTable: table,
+                        currentColumn: table.novelId,
+                        referencedTable: $$TimelineEventsTableReferences
+                            ._novelIdTable(db),
+                        referencedColumn: $$TimelineEventsTableReferences
+                            ._novelIdTable(db)
+                            .id,
+                      ) as T;
+                    }
+
+                    return state;
+                  },
+              getPrefetchedDataCallback: (items) async {
+                return [];
+              },
+            );
+          },
+        ),
+      );
+}
+
+typedef $$TimelineEventsTableProcessedTableManager =
+    ProcessedTableManager<
+      _$AppDatabase,
+      $TimelineEventsTable,
+      TimelineEvent,
+      $$TimelineEventsTableFilterComposer,
+      $$TimelineEventsTableOrderingComposer,
+      $$TimelineEventsTableAnnotationComposer,
+      $$TimelineEventsTableCreateCompanionBuilder,
+      $$TimelineEventsTableUpdateCompanionBuilder,
+      (TimelineEvent, $$TimelineEventsTableReferences),
+      TimelineEvent,
       PrefetchHooks Function({bool novelId})
     >;
 typedef $$WorldEntriesTableCreateCompanionBuilder =
@@ -13470,6 +17061,9 @@ typedef $$ForeshadowingsTableCreateCompanionBuilder =
       Value<String?> plannedResolve,
       Value<String> status,
       Value<String?> note,
+      Value<String> involvedCharactersJson,
+      Value<int?> resolvedChapterOrder,
+      Value<String?> payoffDetail,
       Value<bool> suggestedResolved,
       required DateTime createdAt,
       Value<int> rowid,
@@ -13485,6 +17079,9 @@ typedef $$ForeshadowingsTableUpdateCompanionBuilder =
       Value<String?> plannedResolve,
       Value<String> status,
       Value<String?> note,
+      Value<String> involvedCharactersJson,
+      Value<int?> resolvedChapterOrder,
+      Value<String?> payoffDetail,
       Value<bool> suggestedResolved,
       Value<DateTime> createdAt,
       Value<int> rowid,
@@ -13562,6 +17159,21 @@ class $$ForeshadowingsTableFilterComposer
 
   ColumnFilters<String> get note => $composableBuilder(
     column: $table.note,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get involvedCharactersJson => $composableBuilder(
+    column: $table.involvedCharactersJson,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get resolvedChapterOrder => $composableBuilder(
+    column: $table.resolvedChapterOrder,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get payoffDetail => $composableBuilder(
+    column: $table.payoffDetail,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -13648,6 +17260,21 @@ class $$ForeshadowingsTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<String> get involvedCharactersJson => $composableBuilder(
+    column: $table.involvedCharactersJson,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get resolvedChapterOrder => $composableBuilder(
+    column: $table.resolvedChapterOrder,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get payoffDetail => $composableBuilder(
+    column: $table.payoffDetail,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   ColumnOrderings<bool> get suggestedResolved => $composableBuilder(
     column: $table.suggestedResolved,
     builder: (column) => ColumnOrderings(column),
@@ -13721,6 +17348,21 @@ class $$ForeshadowingsTableAnnotationComposer
   GeneratedColumn<String> get note =>
       $composableBuilder(column: $table.note, builder: (column) => column);
 
+  GeneratedColumn<String> get involvedCharactersJson => $composableBuilder(
+    column: $table.involvedCharactersJson,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<int> get resolvedChapterOrder => $composableBuilder(
+    column: $table.resolvedChapterOrder,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get payoffDetail => $composableBuilder(
+    column: $table.payoffDetail,
+    builder: (column) => column,
+  );
+
   GeneratedColumn<bool> get suggestedResolved => $composableBuilder(
     column: $table.suggestedResolved,
     builder: (column) => column,
@@ -13792,6 +17434,9 @@ class $$ForeshadowingsTableTableManager
                 Value<String?> plannedResolve = const Value.absent(),
                 Value<String> status = const Value.absent(),
                 Value<String?> note = const Value.absent(),
+                Value<String> involvedCharactersJson = const Value.absent(),
+                Value<int?> resolvedChapterOrder = const Value.absent(),
+                Value<String?> payoffDetail = const Value.absent(),
                 Value<bool> suggestedResolved = const Value.absent(),
                 Value<DateTime> createdAt = const Value.absent(),
                 Value<int> rowid = const Value.absent(),
@@ -13805,6 +17450,9 @@ class $$ForeshadowingsTableTableManager
                 plannedResolve: plannedResolve,
                 status: status,
                 note: note,
+                involvedCharactersJson: involvedCharactersJson,
+                resolvedChapterOrder: resolvedChapterOrder,
+                payoffDetail: payoffDetail,
                 suggestedResolved: suggestedResolved,
                 createdAt: createdAt,
                 rowid: rowid,
@@ -13820,6 +17468,9 @@ class $$ForeshadowingsTableTableManager
                 Value<String?> plannedResolve = const Value.absent(),
                 Value<String> status = const Value.absent(),
                 Value<String?> note = const Value.absent(),
+                Value<String> involvedCharactersJson = const Value.absent(),
+                Value<int?> resolvedChapterOrder = const Value.absent(),
+                Value<String?> payoffDetail = const Value.absent(),
                 Value<bool> suggestedResolved = const Value.absent(),
                 required DateTime createdAt,
                 Value<int> rowid = const Value.absent(),
@@ -13833,6 +17484,9 @@ class $$ForeshadowingsTableTableManager
                 plannedResolve: plannedResolve,
                 status: status,
                 note: note,
+                involvedCharactersJson: involvedCharactersJson,
+                resolvedChapterOrder: resolvedChapterOrder,
+                payoffDetail: payoffDetail,
                 suggestedResolved: suggestedResolved,
                 createdAt: createdAt,
                 rowid: rowid,
@@ -17285,6 +20939,10 @@ class $AppDatabaseManager {
       $$ChapterSnapshotsTableTableManager(_db, _db.chapterSnapshots);
   $$CharactersTableTableManager get characters =>
       $$CharactersTableTableManager(_db, _db.characters);
+  $$CharacterRelationsTableTableManager get characterRelations =>
+      $$CharacterRelationsTableTableManager(_db, _db.characterRelations);
+  $$TimelineEventsTableTableManager get timelineEvents =>
+      $$TimelineEventsTableTableManager(_db, _db.timelineEvents);
   $$WorldEntriesTableTableManager get worldEntries =>
       $$WorldEntriesTableTableManager(_db, _db.worldEntries);
   $$ForeshadowingsTableTableManager get foreshadowings =>
