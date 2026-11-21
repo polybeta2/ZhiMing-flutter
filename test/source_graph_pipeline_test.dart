@@ -2,6 +2,9 @@ import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:zhiming/domain/models/source_profile_models.dart';
+import 'package:zhiming/domain/source/source_batch_helper.dart';
+import 'package:zhiming/domain/source/source_micro_summarizer.dart';
+import 'package:zhiming/domain/source/source_scan_chunker.dart';
 
 void main() {
   group('SourceNovelProfileData v2 additive contract', () {
@@ -116,6 +119,61 @@ void main() {
       expect(decoded.worldbuilding.single.keywords, isEmpty);
       expect(decoded.openThreads.single.status, 'open');
       expect(decoded.openThreads.single.involvedCharacters, isEmpty);
+    });
+  });
+
+  group('SourceScanChunker & MicroSummary & SourceBatchHelper', () {
+    test('long chapter split preserves real chapterNo and part metadata', () {
+      final longBody = '钟声响起，迷雾涌动。' * 500; // 5000 chars -> 2 parts
+      final book = '第1章 雾起\n$longBody\n\n第2章 交易\n莫烬来到下城区。';
+      final chunks = SourceScanChunker.chunks(book, mode: ScanMode.full);
+      expect(chunks.length, 3);
+      expect(chunks[0].chapterNo, 1);
+      expect(chunks[0].partIndex, 0);
+      expect(chunks[0].partCount, 2);
+      expect(chunks[0].chapterTitle, contains('第1章'));
+      expect(chunks[1].chapterNo, 1);
+      expect(chunks[1].partIndex, 1);
+      expect(chunks[1].partCount, 2);
+      expect(chunks[2].chapterNo, 2);
+      expect(chunks[2].partCount, 1);
+    });
+
+    test('MicroSummary parses aliases, relations, inWorldTime and targetHint', () {
+      const raw = '''
+{
+  "chapter": 50,
+  "characters": [{"name": "林医生", "aliases": ["老林"], "role_hint": "配角", "camp_hint": "星光之城", "traits": "炼金术师", "state_change": "重逢莫烬"}],
+  "relations": [{"from": "莫烬", "to": "林医生", "relation": "欠债2000魂", "kind": "盟友", "line": "明线", "evidence": "妃莉娅代付"}],
+  "events": [{"summary": "进入星光之城", "in_world_time": "次日黄昏", "participants": ["莫烬", "妃莉娅"], "importance": "major"}],
+  "worldbuilding": [{"name": "星光之城", "category": "地点", "content": "城主庇佑"}],
+  "foreshadowing": [{"summary": "莫烬对林医生有莫名熟悉感", "planted": true, "characters": ["莫烬", "林医生"], "target_hint": ""}]
+}
+''';
+      final parsed = SourceMicroSummarizer.parse(raw);
+      expect(parsed.chapterNo, 50);
+      expect(parsed.characters.single.aliases, ['老林']);
+      expect(parsed.characters.single.campHint, '星光之城');
+      expect(parsed.relations.single.from, '莫烬');
+      expect(parsed.relations.single.to, '林医生');
+      expect(parsed.events.single.inWorldTime, '次日黄昏');
+      expect(parsed.events.single.importance, 'major');
+      expect(parsed.worldbuilding.single.category, '地点');
+      expect(parsed.foreshadowing.single.characters, ['莫烬', '林医生']);
+    });
+
+    test('SourceBatchHelper parses duplicate chapterNo rows from multi-part chapter', () {
+      const raw = '''
+{"chapter": 1, "characters": [{"name": "莫烬", "traits": "冷静"}], "relations": [{"from": "莫烬", "to": "薇拉", "relation": "同伴", "kind": "亲友", "line": "明线"}], "events": [{"summary": "上半段事件", "participants": ["莫烬"]}], "worldbuilding": [], "foreshadowing": [{"summary": "伏笔A", "planted": true, "characters": ["莫烬"]}]}
+{"chapter": 1, "characters": [{"name": "爱丽丝", "aliases": ["人偶女孩"]}], "relations": [], "events": [{"summary": "下半段事件", "participants": ["爱丽丝"]}], "worldbuilding": [], "foreshadowing": []}
+''';
+      final entries = SourceBatchHelper.parseBatchEntries(raw);
+      expect(entries.length, 2);
+      expect(entries[0].chapterNo, 1);
+      expect(entries[1].chapterNo, 1);
+      final merged = SourceBatchHelper.parseBatchOutput(raw);
+      expect(merged[0]!.characters.length, 2);
+      expect(merged[0]!.events.length, 2);
     });
   });
 }

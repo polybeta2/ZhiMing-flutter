@@ -9,7 +9,7 @@ class BatchChapterInput {
     required this.body,
   });
 
-  /// 1-based 序号（全书块序或章序）
+  /// 1-based 真实章号
   final int index;
   final String? title;
   final String body;
@@ -22,10 +22,13 @@ class SourceBatchHelper {
   static const int perChapterEstimateChars = 600;
 
   static String chapterBlock(BatchChapterInput chapter) {
-    final marker = (chapter.title != null && chapter.title!.trim().isNotEmpty)
-        ? chapter.title!.trim()
-        : '第${chapter.index}章';
-    return '【$marker】\n${chapter.body}';
+    final cleanTitle = chapter.title?.trim() ?? '';
+    final marker = cleanTitle.isEmpty
+        ? '第${chapter.index}章'
+        : (cleanTitle.contains('第${chapter.index}')
+              ? cleanTitle
+              : '第${chapter.index}章 $cleanTitle');
+    return '【$marker（chapter=${chapter.index}）】\n${chapter.body}';
   }
 
   static String prompt({
@@ -40,20 +43,22 @@ class SourceBatchHelper {
     final last = chapters.last.index;
 
     final lines = <String>[
-      '【任务】你是小说内容分析师。下面是《$book》第 $first-$last 章的正文（共 ${chapters.length} 章）。',
-      '请逐章输出「增量式微摘要」JSON：每章输出【一行】JSON 对象，章与章之间用换行分隔；除此之外不要输出任何内容（不要解释、不要代码块围栏、不要编号）。',
-      '每章 JSON 格式（只记录本章「新增或变化」的信息：新角色、性格/能力表现、状态变化、发生的事件、新确立的设定、新埋或回收的伏笔；不要复述前文已知内容；本章无新增则对应字段给空数组）：',
-      '{"chapter": <本章序号>, "characters": [{"name": "", "traits": "", "state_change": ""}], "events": [{"summary": "", "participants": []}], "worldbuilding": [{"name": "", "content": ""}], "foreshadowing": [{"summary": "本章新埋或回收的伏笔一句话", "planted": true}]}',
-      '伏笔规则：本章新埋的记 planted=true（含线索）；本章回收（悬念解除）的记 planted=false；无则空数组。',
+      '【任务】你是小说内容分析师。下面是《$book》第 $first-$last 章的正文（共 ${chapters.length} 段）。',
+      '请逐段输出「增量式微摘要」JSON：每段输出【一行】JSON 对象，行与行之间用换行分隔；除此之外不要输出任何内容（不要解释、不要代码块围栏、不要编号）。',
+      '每行 JSON 格式（chapter 必须严格填标题括号中给出的 chapter 整数；只记录本段新出现或发生变化的信息，无新增则给空数组）：',
+      '{"chapter": <整数章号>, "characters": [{"name": "主名", "aliases": ["别名/形态"], "role_hint": "主角/反派/配角", "camp_hint": "阵营", "traits": "性格或能力", "state_change": "状态变化"}], "relations": [{"from": "角色A", "to": "角色B", "relation": "关系描述", "kind": "亲友|盟友|爱恋|敌对|从属|竞争|未知", "line": "明线|暗线", "evidence": "依据"}], "events": [{"summary": "核心事件", "in_world_time": "书内时间(可选)", "participants": ["角色A"], "importance": "major|normal|minor"}], "worldbuilding": [{"name": "词条", "category": "力量体系|地理|势力|规则|器物", "content": "说明"}], "foreshadowing": [{"summary": "新埋或回收的伏笔一句话", "planted": true, "characters": ["相关角色"], "target_hint": "回收时简述对应前期悬念"}]}',
+      '规则：新埋伏笔记 planted=true；本段揭晓/回收的记 planted=false 并填写 target_hint；涉及秘密/单方不知情/幕后操控的关系 line 记为 "暗线"，公开关系记为 "明线"。',
       '',
       for (final c in chapters) chapterBlock(c),
     ];
     return lines.join('\n\n');
   }
 
-  /// 解析外部 AI 输出为 0-based 序号 → MicroSummary。
-  static Map<int, MicroSummary> parseBatchOutput(String raw) {
-    final result = <int, MicroSummary>{};
+  /// 解析逐行输出为有序列表（支持超长章拆多段时共享同一 chapterNo）。
+  static List<({int chapterNo, MicroSummary summary})> parseBatchEntries(
+    String raw,
+  ) {
+    final entries = <({int chapterNo, MicroSummary summary})>[];
     for (final jsonStr in extractJsonObjects(raw, matchingKey: 'chapter')) {
       try {
         final decoded = jsonDecode(jsonStr);
@@ -62,13 +67,28 @@ class SourceBatchHelper {
         final ch = map['chapter'];
         final idx = ch is num ? ch.toInt() : int.tryParse(ch?.toString() ?? '');
         if (idx == null || idx < 1) continue;
-        result[idx - 1] = MicroSummary.fromJson(map);
+        final summary = MicroSummary.fromJson(map);
+        entries.add((chapterNo: idx, summary: summary));
       } catch (_) {
         continue;
       }
     }
-    if (result.isEmpty) {
+    if (entries.isEmpty) {
       throw const FormatException('未能解析出任何逐章微摘要 JSON');
+    }
+    return entries;
+  }
+
+  /// 解析外部 AI 输出为 0-based 章序 → MicroSummary（同章多段自动合并）。
+  static Map<int, MicroSummary> parseBatchOutput(String raw) {
+    final entries = parseBatchEntries(raw);
+    final result = <int, MicroSummary>{};
+    for (final entry in entries) {
+      final key = entry.chapterNo - 1;
+      final existing = result[key];
+      result[key] = existing == null
+          ? entry.summary
+          : existing.mergeWith(entry.summary);
     }
     return result;
   }
