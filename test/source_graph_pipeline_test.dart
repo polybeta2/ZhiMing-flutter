@@ -194,6 +194,7 @@ void main() {
 莫烬说道：“走吧。”莫烬问道：“谁在那里？”莫烬笑道：“有意思。”
 莫烬急忙说道：“快躲开！”莫烬急忙转身。莫烬急忙开口。
 莫烬继续说道：“接着聊。”莫烬继续看着前方。莫烬继续沉默。
+莫烬转头问道：“怎么了？”莫烬转头看向门外。随后转头问道：“谁？”随后转头说道：“走吧。”
 转过头来问道：“你是谁？”转过头来看向门口。转过头来皱眉。
 开口说道：“别吵。”开口问道：“懂了吗？”开口笑道：“行。”
 佩洛冷笑道：“蠢货。”佩洛问道：“准备好了吗？”佩洛转身离开。
@@ -203,6 +204,8 @@ void main() {
       expect(names, containsAll(['莫烬', '佩洛']));
       expect(names, isNot(contains('莫烬急忙')));
       expect(names, isNot(contains('莫烬继续')));
+      expect(names, isNot(contains('莫烬转头')));
+      expect(names, isNot(contains('随后转头')));
       expect(names, isNot(contains('转过头来')));
       expect(names, isNot(contains('开口')));
     });

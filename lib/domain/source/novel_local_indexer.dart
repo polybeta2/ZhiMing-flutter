@@ -121,7 +121,8 @@ class NovelLocalIndexer {
   static const Set<String> _trailingModifiers = {
     '急忙', '继续', '再次', '连忙', '赶紧', '微微', '轻轻', '缓缓', '冷冷',
     '顿时', '随即', '立刻', '直接', '突然', '慢慢', '悄悄', '猛地', '默默',
-    '一愣', '一笑', '一叹', '转身', '抬头', '低头', '开口', '忙', '又', '再',
+    '一愣', '一笑', '一叹', '转身', '转头', '回头', '抬头', '低头', '点头',
+    '摇头', '开口', '忙', '又', '再',
     '却', '便', '就', '也', '还',
   };
 
@@ -198,6 +199,20 @@ class NovelLocalIndexer {
     for (final entry in speakerHits.entries.toList()) {
       final word = entry.key;
       if (word.length < 3) continue;
+      // 过滤「停用词 + 副词/动词后缀」复合脏词（如「随后转头」「立刻开口」）
+      var isCompoundStop = false;
+      for (var split = 2; split <= word.length - 1; split++) {
+        final prefix = word.substring(0, split);
+        final suffix = word.substring(split);
+        if (_stopWords.contains(prefix) &&
+            (_trailingModifiers.contains(suffix) ||
+                _stopWords.contains(suffix))) {
+          toRemove.add(word);
+          isCompoundStop = true;
+          break;
+        }
+      }
+      if (isCompoundStop) continue;
       for (final base in strongBaseNames) {
         if (word.length > base.length && word.startsWith(base)) {
           final suffix = word.substring(base.length);

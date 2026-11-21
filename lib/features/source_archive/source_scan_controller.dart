@@ -533,8 +533,8 @@ class SourceScanController extends ChangeNotifier {
         return;
       }
 
-      // ---- 5. Pass 3A（关系图谱）& Pass 3B（世界观）并发归并 ----
-      statusDetail = '步骤 4/5：归并结构化人物关系图谱与世界观词条…';
+      // ---- 5. Pass 3A（关系图谱）、Pass 3B（世界观）& Pass 4A（伏笔生命周期对账）并发归并 ----
+      statusDetail = '步骤 4/5：并发归并人物关系图谱、世界观词条与全书伏笔对账…';
       notifyListeners();
 
       final relPairs = SourceGraphReducer.selectRelationPairs(
@@ -549,6 +549,7 @@ class SourceScanController extends ChangeNotifier {
 
       final relations = <CanonRelationEdge>[];
       final worldbuilding = <CanonWorldEntry>[];
+      final threads = <CanonThread>[];
 
       await Future.wait([
         () async {
@@ -608,24 +609,15 @@ class SourceScanController extends ChangeNotifier {
             } catch (_) {}
           }
         }(),
-      ]);
-      if (_cancelled || generation != _runGeneration) return;
-
-      // ---- 6. Pass 4A（伏笔生命周期对账）→ Pass 4B（时间线里程碑与主线） ----
-      statusDetail = '步骤 5/5：对账全书伏笔埋收周期与剧情时间线里程碑…';
-      notifyListeners();
-
-      final threads = <CanonThread>[];
-      if (normalized.rawClues.isNotEmpty) {
-        final cached = savedReduces[GraphReduceSeq.pass4Clues];
-        var loaded = false;
-        if (cached != null && cached.trim().isNotEmpty) {
-          try {
-            threads.addAll(SourceGraphReducer.parsePass4Clues(cached));
-            loaded = true;
-          } catch (_) {}
-        }
-        if (!loaded) {
+        () async {
+          if (normalized.rawClues.isEmpty) return;
+          final cached = savedReduces[GraphReduceSeq.pass4Clues];
+          if (cached != null && cached.trim().isNotEmpty) {
+            try {
+              threads.addAll(SourceGraphReducer.parsePass4Clues(cached));
+              return;
+            } catch (_) {}
+          }
           final msgs = SourceGraphReducer.pass4CluesPrompt(
             normalized,
             title: title,
@@ -644,8 +636,13 @@ class SourceScanController extends ChangeNotifier {
               );
             } catch (_) {}
           }
-        }
-      }
+        }(),
+      ]);
+      if (_cancelled || generation != _runGeneration) return;
+
+      // ---- 6. Pass 4B（时间线里程碑与主线，关联已对账伏笔标题） ----
+      statusDetail = '步骤 5/5：归并剧情时间线里程碑与主线弧（已对账 ${threads.length} 条伏笔）…';
+      notifyListeners();
 
       var timelineResult = const TimelinePassResult(
         timeline: [],

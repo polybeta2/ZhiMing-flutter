@@ -88,7 +88,8 @@ abstract final class ContextBuilder {
     _appendNextOutlineHead(chapter, bundle, dynamicRequired);
 
     final positions = bundle.globalIndexMap();
-    final currentGlobal = positions[chapter.chapter.id] ?? 0;
+    final currentGlobal =
+        positions[chapter.chapter.id] ?? (bundle.allChaptersInOrder.length + 1);
 
     final prevSums = _summariesBefore(currentGlobal, bundle, positions, limit: 3);
     if (prevSums.isNotEmpty) {
