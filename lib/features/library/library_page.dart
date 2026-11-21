@@ -6,6 +6,7 @@ import '../../core/database/app_database.dart';
 import '../../core/database/novel_repository.dart';
 import '../../core/theme/design_tokens.dart';
 import '../../core/widgets/zm_widgets.dart';
+import '../../domain/writing/writing_director_config.dart';
 import 'novel_create_dialog.dart';
 
 /// 书库首页：干净的作品卡片列表 + 搜索 + 唯一「新建作品」入口
@@ -73,6 +74,7 @@ class _LibraryPageState extends ConsumerState<LibraryPage> {
     );
     if (!ok) return;
     await ref.read(appDatabaseProvider).deleteNovelCascade(novel.id);
+    await WritingDirectorStore.delete(novel.id);
     if (mounted) showZmSnackBar(context, '已删除《${novel.title}》');
   }
 

@@ -571,9 +571,10 @@ void main() {
         await flushAsyncAndPump(tester);
         expect(find.textContaining('青铜提灯微弱地摇晃着'), findsOneWidget);
 
-        // 3) T2.3: 设定集开启 R18 触发免责声明弹窗（「同意并开启」）与 R18 徽章
+        // 3) T2.3: 设定集开启 R18 触发免责声明弹窗（「同意并开启」）+ R18 细腻度子面板 + 写作导演开关
         await tester.tap(find.text('设定集'));
         await flushAsyncAndPump(tester);
+        expect(find.text('R18 细腻度与防发情门控'), findsNothing);
         await tester.tap(find.textContaining('R18').first);
         await flushAsyncAndPump(tester);
         if (find.text('同意并开启').evaluate().isNotEmpty) {
@@ -581,6 +582,32 @@ void main() {
           await flushAsyncAndPump(tester);
         }
         expect(find.text('R18'), findsWidgets);
+        await tester.scrollUntilVisible(
+          find.text('R18 细腻度与防发情门控'),
+          200,
+          scrollable: find.byType(Scrollable).first,
+        );
+        await flushAsyncAndPump(tester);
+        expect(find.text('温柔重细节'), findsOneWidget);
+        expect(find.text('舒缓克制'), findsOneWidget);
+        expect(find.text('仅细纲明示时触发（防日常发情）'), findsOneWidget);
+
+        await tester.scrollUntilVisible(
+          find.text('写作导演开关'),
+          240,
+          scrollable: find.byType(Scrollable).first,
+        );
+        await flushAsyncAndPump(tester);
+        expect(find.text('电影运镜'), findsOneWidget);
+        await tester.tap(find.text('电影运镜'));
+        await flushAsyncAndPump(tester);
+        await tester.scrollUntilVisible(
+          find.text('活人感加强'),
+          200,
+          scrollable: find.byType(Scrollable).first,
+        );
+        await tester.tap(find.text('活人感加强'));
+        await flushAsyncAndPump(tester);
 
         // 4) T4.3: 写作助手唯一只读/可改设定权限胶囊
         await tester.tap(find.text('助手'));

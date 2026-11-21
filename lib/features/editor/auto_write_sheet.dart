@@ -22,6 +22,8 @@ import '../../domain/models/novel_domain.dart';
 import '../../domain/writing/chapter_ledger.dart';
 import '../../domain/writing/context_builder.dart';
 import '../../domain/writing/fact_review_service.dart';
+import '../../domain/writing/writing_director_composer.dart';
+import '../../domain/writing/writing_director_config.dart';
 
 /// 自动撰写流水线（修复原版 B3 三大缺陷：URL 安全校验、建档喂 reasoning 事件、空章 R18 语言回退细纲/梗概）
 class AutoWriteSheet extends ConsumerStatefulWidget {
@@ -130,6 +132,7 @@ class _AutoWriteSheetState extends ConsumerState<AutoWriteSheet> {
     await BackgroundKeepAliveService.instance.acquire();
 
     final lib = ref.read(promptLibraryProvider);
+    final directorCfg = await WritingDirectorStore.load(widget.novelId);
     final config = GenerationConfig(
       temperature: provider.temperature,
       maxTokens: provider.maxTokens,
@@ -164,9 +167,19 @@ class _AutoWriteSheetState extends ConsumerState<AutoWriteSheet> {
         final antiAiText = _antiAIInline
             ? lib.resolvedText(PromptID.antiAIInline)
             : null;
+        final directorBlock = WritingDirectorComposer.composeStaticBlock(
+          directorCfg,
+          r18Enabled: bundle.novel.r18Enabled,
+        );
         final budget = PromptTemplates.adjustedInputBudget(
           provider.contextBudgetChars,
-          [r18Text, styleCard, antiAiText, provider.systemPromptExtra],
+          [
+            r18Text,
+            styleCard,
+            antiAiText,
+            directorBlock.isEmpty ? null : directorBlock,
+            provider.systemPromptExtra,
+          ],
         );
         final ctx = ContextBuilder.buildContinueContext(
           chapter: freshCh,
@@ -174,6 +187,7 @@ class _AutoWriteSheetState extends ConsumerState<AutoWriteSheet> {
           budgetChars: budget,
           styleCard: styleCard,
           sourceWindow: sourceWindow,
+          directorConfig: directorCfg,
         );
         var writeMsgs = PromptTemplates.writing(
           library: lib,
@@ -450,6 +464,35 @@ class _AutoWriteSheetState extends ConsumerState<AutoWriteSheet> {
             onChanged: _running
                 ? null
                 : (v) => setState(() => _enableFactReviewGate = v),
+          ),
+          Builder(
+            builder: (context) {
+              final dirCfg = ref.watch(
+                writingDirectorProvider(widget.novelId),
+              );
+              final novel = ref
+                  .watch(novelStreamProvider(widget.novelId))
+                  .valueOrNull;
+              final labels = dirCfg.activeLabels(
+                r18Enabled: novel?.r18Enabled ?? false,
+              );
+              if (labels.isEmpty) return const SizedBox.shrink();
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: Wrap(
+                  spacing: 6,
+                  runSpacing: 4,
+                  children: [
+                    for (final l in labels)
+                      Chip(
+                        label: Text(l, style: const TextStyle(fontSize: 11)),
+                        visualDensity: VisualDensity.compact,
+                        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      ),
+                  ],
+                ),
+              );
+            },
           ),
           if (_running || _total > 0) ...[
             const Divider(),

@@ -224,8 +224,11 @@ class NewTimelineEvent {
   }
 }
 
-/// 活体账本单次提取完整结果（兼容旧 SummaryResult 结构并扩展实体、关系与时间线增量）。
+/// 活体账本单次提取完整结果（兼容旧 SummaryResult 结构并扩展实体、关系、时间线与场记定格/场外暗线）。
 class ChapterLedgerExtraction {
+  static const String sceneFreezePrefix = '【章末定格】';
+  static const String offscreenBeatPrefix = '【场外暗线】';
+
   const ChapterLedgerExtraction({
     required this.summaryResult,
     this.characterDeltas = const [],
@@ -233,6 +236,8 @@ class ChapterLedgerExtraction {
     this.newWorldEntries = const [],
     this.relationshipDeltas = const [],
     this.timelineEvents = const [],
+    this.sceneFreeze,
+    this.offscreenBeats = const [],
   });
 
   final SummaryResult summaryResult;
@@ -241,6 +246,8 @@ class ChapterLedgerExtraction {
   final List<NewWorldEntry> newWorldEntries;
   final List<RelationshipDelta> relationshipDeltas;
   final List<NewTimelineEvent> timelineEvents;
+  final String? sceneFreeze;
+  final List<String> offscreenBeats;
 
   bool get hasWriteBackCandidates =>
       characterDeltas.isNotEmpty ||
@@ -321,6 +328,24 @@ class ChapterLedgerExtraction {
                 .toList()
           : <NewTimelineEvent>[];
 
+      final rawFreeze = _cleanDeltaField(
+        json['scene_freeze'] ?? json['sceneFreeze'],
+      );
+      final sceneFreeze = rawFreeze == null
+          ? null
+          : (rawFreeze.length > 140
+                ? '${rawFreeze.substring(0, 140)}…'
+                : rawFreeze);
+
+      final offscreenRaw = json['offscreen_beats'] ?? json['offscreenBeats'];
+      final offscreenBeats = offscreenRaw is List
+          ? offscreenRaw
+                .map(_cleanDeltaField)
+                .whereType<String>()
+                .take(3)
+                .toList()
+          : <String>[];
+
       return ChapterLedgerExtraction(
         summaryResult: SummaryResult(
           summary: summary,
@@ -333,6 +358,8 @@ class ChapterLedgerExtraction {
         newWorldEntries: newWorlds,
         relationshipDeltas: relDeltas,
         timelineEvents: timelineEvents,
+        sceneFreeze: sceneFreeze,
+        offscreenBeats: offscreenBeats,
       );
     });
   }
@@ -429,12 +456,32 @@ abstract final class ChapterLedgerApplier {
           .map((f) => f.id)
           .toSet();
 
+      final mergedKeyFacts = <String>[...extraction.summaryResult.keyFacts];
+      if (extraction.sceneFreeze != null &&
+          extraction.sceneFreeze!.trim().isNotEmpty) {
+        final tagged =
+            '${ChapterLedgerExtraction.sceneFreezePrefix}${extraction.sceneFreeze!.trim()}';
+        if (!mergedKeyFacts.any(
+          (f) => f.startsWith(ChapterLedgerExtraction.sceneFreezePrefix),
+        )) {
+          mergedKeyFacts.add(tagged);
+        }
+      }
+      for (final beat in extraction.offscreenBeats) {
+        final cleaned = beat.trim();
+        if (cleaned.isEmpty) continue;
+        final tagged = '${ChapterLedgerExtraction.offscreenBeatPrefix}$cleaned';
+        if (!mergedKeyFacts.contains(tagged)) {
+          mergedKeyFacts.add(tagged);
+        }
+      }
+
       await repo.applySummaryResult(
         novelId: novelId,
         chapter: chapter,
         result: SummaryResult(
           summary: extraction.summaryResult.summary,
-          keyFacts: extraction.summaryResult.keyFacts,
+          keyFacts: mergedKeyFacts,
           newForeshadowings: filteredNewFs,
           resolvedForeshadowingTitles: filteredResolvedFs,
         ),

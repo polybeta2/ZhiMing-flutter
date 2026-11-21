@@ -29,6 +29,8 @@ import '../../domain/writing/chapter_ledger.dart';
 import '../../domain/writing/context_builder.dart';
 import '../../domain/writing/fact_review_service.dart';
 import '../../domain/writing/prose_checker.dart';
+import '../../domain/writing/writing_director_composer.dart';
+import '../../domain/writing/writing_director_config.dart';
 import '../app_settings/model_selector_sheet.dart';
 import 'fact_review_sheet.dart';
 
@@ -353,6 +355,36 @@ class _ChapterEditorWidgetState extends ConsumerState<ChapterEditorWidget> {
                   value: antiAI,
                   onChanged: (v) => setModal(() => antiAI = v),
                 ),
+                Builder(
+                  builder: (ctx) {
+                    final dirCfg = ref.read(
+                      writingDirectorProvider(widget.novelId),
+                    );
+                    final novel = ref
+                        .read(novelStreamProvider(widget.novelId))
+                        .valueOrNull;
+                    final labels = dirCfg.activeLabels(
+                      r18Enabled: novel?.r18Enabled ?? false,
+                    );
+                    if (labels.isEmpty) return const SizedBox.shrink();
+                    return Padding(
+                      padding: const EdgeInsets.only(top: 4),
+                      child: Wrap(
+                        spacing: 6,
+                        runSpacing: 4,
+                        children: [
+                          for (final l in labels)
+                            Chip(
+                              label: Text(l, style: const TextStyle(fontSize: 11)),
+                              visualDensity: VisualDensity.compact,
+                              materialTapTargetSize:
+                                  MaterialTapTargetSize.shrinkWrap,
+                            ),
+                        ],
+                      ),
+                    );
+                  },
+                ),
               ],
             ),
           ),
@@ -426,9 +458,20 @@ class _ChapterEditorWidgetState extends ConsumerState<ChapterEditorWidget> {
     final antiAI = req.antiAIInline
         ? lib.resolvedText(PromptID.antiAIInline)
         : null;
+    final directorCfg = await WritingDirectorStore.load(widget.novelId);
+    final directorBlock = WritingDirectorComposer.composeStaticBlock(
+      directorCfg,
+      r18Enabled: bundle.novel.r18Enabled,
+    );
     final budget = PromptTemplates.adjustedInputBudget(
       provider.contextBudgetChars,
-      [r18Text, styleCard, antiAI, provider.systemPromptExtra],
+      [
+        r18Text,
+        styleCard,
+        antiAI,
+        directorBlock.isEmpty ? null : directorBlock,
+        provider.systemPromptExtra,
+      ],
     );
     final ctx = ContextBuilder.buildContinueContext(
       chapter: chBundle,
@@ -436,6 +479,7 @@ class _ChapterEditorWidgetState extends ConsumerState<ChapterEditorWidget> {
       budgetChars: budget,
       styleCard: styleCard,
       sourceWindow: sourceWindow,
+      directorConfig: directorCfg,
     );
     var msgs = req.isNewChapter
         ? PromptTemplates.writing(

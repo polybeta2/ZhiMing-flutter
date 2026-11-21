@@ -37,7 +37,9 @@ abstract final class ProseChecker {
     '某种难以言喻',
     '难以言喻的',
     '一丝不易察觉',
+    '一抹不易察觉',
     '不易察觉的',
+    '不容置疑的意味',
     '空气仿佛凝固',
     '空气瞬间凝固',
   ];
@@ -60,6 +62,12 @@ abstract final class ProseChecker {
     r'[让令使][人他她它][^。！？\n]{0,6}(感到|不禁|生出|产生)',
   );
   static final RegExp _cognitionRe = RegExp(r'意识到|心中一凛|内心深处|心里清楚');
+  static final RegExp _stoneRippleRe = RegExp(
+    r'像(一颗|一块|一粒)?小?石子[^。！？\n]{0,14}(投入|落入|砸进|丢进)[^。！？\n]{0,14}(涟漪|波澜)',
+  );
+  static final RegExp _emotionTagTailRe = RegExp(
+    r'(语气|声音|话语|语调)(中|里)?(带着|透着|夹杂着|藏着)(一丝|一抹|几分)|不容置疑的(意味|语气|口吻)',
+  );
   static final RegExp _leRe = RegExp('了');
 
   static List<String> reportLines(String text, {int maxLines = 8}) {
@@ -145,6 +153,26 @@ abstract final class ProseChecker {
         ProseIssue(
           rule: '认知直陈',
           detail: '「意识到/心中一凛」类 $cognition 处，用身体反应与环境互动外化',
+        ),
+      );
+    }
+
+    final stoneRipple = _stoneRippleRe.allMatches(text).length;
+    if (stoneRipple > 0) {
+      issues.add(
+        ProseIssue(
+          rule: '公式化投石开头',
+          detail: '命中 $stoneRipple 处「像石子投入湖面激起涟漪」类陈腐比喻，请换成直接的场景细节或动作起笔',
+        ),
+      );
+    }
+
+    final emotionTail = _emotionTagTailRe.allMatches(text).length;
+    if (emotionTail > 0) {
+      issues.add(
+        ProseIssue(
+          rule: '动作后情绪解读尾巴',
+          detail: '命中 $emotionTail 处「语气带着一丝…/不容置疑的意味」类情绪直说，若只有一丝或不易察觉就不要替读者说破',
         ),
       );
     }

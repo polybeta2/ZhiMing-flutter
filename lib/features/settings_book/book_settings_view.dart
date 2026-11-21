@@ -10,6 +10,7 @@ import '../../core/widgets/character_graph_canvas.dart';
 import '../../core/widgets/r18_toggle_tile.dart';
 import '../../core/widgets/zm_widgets.dart';
 import '../../domain/models/novel_domain.dart';
+import '../../domain/writing/writing_director_config.dart';
 
 /// 作品设定集：将原版散落的「基本信息/文风/R18」「角色卡」「世界观」统一收口为单页三段切换
 class BookSettingsView extends ConsumerStatefulWidget {
@@ -134,6 +135,10 @@ class _BasicMetaPaneState extends ConsumerState<_BasicMetaPane> {
   Widget build(BuildContext context) {
     final asyncNovel = ref.watch(novelStreamProvider(widget.novelId));
     final stylesStream = ref.watch(appDatabaseProvider).watchStyleProfiles();
+    final directorCfg = ref.watch(writingDirectorProvider(widget.novelId));
+    final directorNotifier = ref.read(
+      writingDirectorProvider(widget.novelId).notifier,
+    );
 
     return asyncNovel.when(
       loading: () => const Center(child: CircularProgressIndicator()),
@@ -278,9 +283,241 @@ class _BasicMetaPaneState extends ConsumerState<_BasicMetaPane> {
                                     );
                               },
                             ),
+                            if (novel.r18Enabled) ...[
+                              const SizedBox(height: AppTokens.s2),
+                              Material(
+                                color: Theme.of(context)
+                                    .colorScheme
+                                    .errorContainer
+                                    .withValues(alpha: 0.22),
+                                borderRadius: BorderRadius.circular(
+                                  AppTokens.radiusInput,
+                                ),
+                                child: Padding(
+                                  padding: const EdgeInsets.all(AppTokens.s3),
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        'R18 细腻度与防发情门控',
+                                        style: Theme.of(context)
+                                            .textTheme
+                                            .titleSmall
+                                            ?.copyWith(
+                                              fontWeight: FontWeight.w600,
+                                            ),
+                                      ),
+                                      const SizedBox(height: 8),
+                                      SegmentedButton<R18StylePreset>(
+                                        showSelectedIcon: false,
+                                        segments: [
+                                          for (final p in R18StylePreset.values)
+                                            ButtonSegment(
+                                              value: p,
+                                              label: Text(p.label),
+                                            ),
+                                        ],
+                                        selected: {directorCfg.r18StylePreset},
+                                        onSelectionChanged: (s) =>
+                                            directorNotifier.update(
+                                              (c) => c.copyWith(
+                                                r18StylePreset: s.first,
+                                              ),
+                                            ),
+                                      ),
+                                      const SizedBox(height: 6),
+                                      Text(
+                                        directorCfg.r18StylePreset.description,
+                                        style: Theme.of(
+                                          context,
+                                        ).textTheme.bodySmall,
+                                      ),
+                                      SwitchListTile(
+                                        contentPadding: EdgeInsets.zero,
+                                        title: const Text('仅细纲明示时触发（防日常发情）'),
+                                        subtitle: const Text(
+                                          '未到亲密细纲的日常/剧情章严禁 AI 强行往擦边引导',
+                                          style: TextStyle(fontSize: 12),
+                                        ),
+                                        value: directorCfg.r18StrictOutlineGate,
+                                        onChanged: (v) =>
+                                            directorNotifier.update(
+                                              (c) => c.copyWith(
+                                                r18StrictOutlineGate: v,
+                                              ),
+                                            ),
+                                      ),
+                                      SwitchListTile(
+                                        contentPadding: EdgeInsets.zero,
+                                        title: const Text('亲密台词声感增强'),
+                                        subtitle: const Text(
+                                          '贴合原人设口吻融入气息停顿与即时体感反馈，避免 OOC',
+                                          style: TextStyle(fontSize: 12),
+                                        ),
+                                        value: directorCfg.r18IntimateDialogue,
+                                        onChanged: (v) =>
+                                            directorNotifier.update(
+                                              (c) => c.copyWith(
+                                                r18IntimateDialogue: v,
+                                              ),
+                                            ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            ],
                           ],
                         );
                       },
+                    ),
+                  ),
+                ),
+                const SizedBox(height: AppTokens.s4),
+                Card(
+                  child: Padding(
+                    padding: const EdgeInsets.all(AppTokens.s4),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                '写作导演开关',
+                                style: Theme.of(context).textTheme.titleSmall
+                                    ?.copyWith(fontWeight: FontWeight.w600),
+                              ),
+                            ),
+                            Text(
+                              directorCfg
+                                      .activeLabels(
+                                        r18Enabled: novel.r18Enabled,
+                                      )
+                                      .isEmpty
+                                  ? '全部关闭（0 Token）'
+                                  : '已启用 ${directorCfg.activeLabels(r18Enabled: novel.r18Enabled).length} 项',
+                              style: Theme.of(context).textTheme.labelSmall
+                                  ?.copyWith(
+                                    color: Theme.of(
+                                      context,
+                                    ).colorScheme.onSurfaceVariant,
+                                  ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          '按书实时持久化，仅在撰写/续写/自动撰写时按勾选注入规则，未勾选项 0 Token 消耗。',
+                          style: Theme.of(context).textTheme.bodySmall
+                              ?.copyWith(
+                                color: Theme.of(
+                                  context,
+                                ).colorScheme.onSurfaceVariant,
+                              ),
+                        ),
+                        const SizedBox(height: 12),
+                        Text(
+                          '镜头与文风微调',
+                          style: Theme.of(context).textTheme.labelLarge,
+                        ),
+                        const SizedBox(height: 8),
+                        SegmentedButton<ProseCameraMode>(
+                          showSelectedIcon: false,
+                          segments: [
+                            for (final m in ProseCameraMode.values)
+                              ButtonSegment(value: m, label: Text(m.label)),
+                          ],
+                          selected: {directorCfg.cameraMode},
+                          onSelectionChanged: (s) => directorNotifier.update(
+                            (c) => c.copyWith(cameraMode: s.first),
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                        Text(
+                          directorCfg.cameraMode.description,
+                          style: Theme.of(context).textTheme.bodySmall
+                              ?.copyWith(
+                                color: Theme.of(
+                                  context,
+                                ).colorScheme.onSurfaceVariant,
+                              ),
+                        ),
+                        const Divider(height: 20),
+                        SwitchListTile(
+                          contentPadding: EdgeInsets.zero,
+                          title: const Text('活人感加强'),
+                          subtitle: const Text(
+                            '情感与惯性驱动优先，对话贴近日常，不硬拗人设标签',
+                            style: TextStyle(fontSize: 12),
+                          ),
+                          value: directorCfg.livingHumanFeel,
+                          onChanged: (v) => directorNotifier.update(
+                            (c) => c.copyWith(livingHumanFeel: v),
+                          ),
+                        ),
+                        SwitchListTile(
+                          contentPadding: EdgeInsets.zero,
+                          title: const Text('日常克制 / 去狗血'),
+                          subtitle: const Text(
+                            '非高潮场景保持平实情绪水位，不强行拉满戏剧冲突',
+                            style: TextStyle(fontSize: 12),
+                          ),
+                          value: directorCfg.calmDailyPacing,
+                          onChanged: (v) => directorNotifier.update(
+                            (c) => c.copyWith(calmDailyPacing: v),
+                          ),
+                        ),
+                        SwitchListTile(
+                          contentPadding: EdgeInsets.zero,
+                          title: const Text('防公式化开头与硬收尾'),
+                          subtitle: const Text(
+                            '禁「石子投入湖面激起涟漪」式开头；未完剧情在动作/台词处利落切断',
+                            style: TextStyle(fontSize: 12),
+                          ),
+                          value: directorCfg.antiClicheOpenClose,
+                          onChanged: (v) => directorNotifier.update(
+                            (c) => c.copyWith(antiClicheOpenClose: v),
+                          ),
+                        ),
+                        SwitchListTile(
+                          contentPadding: EdgeInsets.zero,
+                          title: const Text('严守信息壁垒（防全知）'),
+                          subtitle: const Text(
+                            '在写前思考链动态插入角色视野与知识盲区核对，防止配角上帝视角',
+                            style: TextStyle(fontSize: 12),
+                          ),
+                          value: directorCfg.strictAntiOmniscience,
+                          onChanged: (v) => directorNotifier.update(
+                            (c) => c.copyWith(strictAntiOmniscience: v),
+                          ),
+                        ),
+                        SwitchListTile(
+                          contentPadding: EdgeInsets.zero,
+                          title: const Text('深度导演写前推演'),
+                          subtitle: const Text(
+                            '引导推理模型在原生思考链静默完成 5-6 步分镜、伏笔与节奏自检（不污染正文）',
+                            style: TextStyle(fontSize: 12),
+                          ),
+                          value: directorCfg.deepPreWriteThinking,
+                          onChanged: (v) => directorNotifier.update(
+                            (c) => c.copyWith(deepPreWriteThinking: v),
+                          ),
+                        ),
+                        SwitchListTile(
+                          contentPadding: EdgeInsets.zero,
+                          title: const Text('场外暗线演化'),
+                          subtitle: const Text(
+                            '结合活体账本中的幕后势力/离场配角动向，让世界在主角视线外持续运转',
+                            style: TextStyle(fontSize: 12),
+                          ),
+                          value: directorCfg.trackOffscreenBeats,
+                          onChanged: (v) => directorNotifier.update(
+                            (c) => c.copyWith(trackOffscreenBeats: v),
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                 ),

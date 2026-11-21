@@ -1,7 +1,10 @@
 import '../../core/database/app_database.dart' as db;
 import '../../core/prompts/prompt_limits.dart';
 import '../models/novel_domain.dart';
+import 'chapter_ledger.dart';
 import 'lorebook_matcher.dart';
+import 'writing_director_composer.dart';
+import 'writing_director_config.dart';
 
 class BuiltContext {
   const BuiltContext({
@@ -50,6 +53,7 @@ abstract final class ContextBuilder {
     required int budgetChars,
     String? styleCard,
     String? sourceWindow,
+    WritingDirectorConfig? directorConfig,
   }) {
     final staticRequired = <String>[];
     final dynamicRequired = <String>[];
@@ -63,6 +67,15 @@ abstract final class ContextBuilder {
       staticRequired.add(
         '【风格约束】\n${_cappedRequired(styleGuide, '风格约束', truncated)}',
       );
+    }
+    if (directorConfig != null) {
+      final directorBlock = WritingDirectorComposer.composeStaticBlock(
+        directorConfig,
+        r18Enabled: bundle.novel.r18Enabled,
+      );
+      if (directorBlock.isNotEmpty) {
+        staticRequired.add(directorBlock);
+      }
     }
     if (styleCard != null && styleCard.isNotEmpty) {
       staticRequired.add(styleCard);
@@ -142,6 +155,19 @@ abstract final class ContextBuilder {
     );
     if (reminders != null) {
       dynamicOptional.add(('未回收伏笔', reminders));
+    }
+
+    final offscreenBeats = _offscreenBeatsBefore(
+      currentGlobal,
+      bundle,
+      positions,
+      limit: 3,
+    );
+    if (offscreenBeats.isNotEmpty) {
+      dynamicOptional.add((
+        '场外暗线',
+        '【场外暗线演化（供后续自然收束，勿硬塞本章）】\n${offscreenBeats.map((b) => '- $b').join('\n')}',
+      ));
     }
 
     var used = [...staticRequired, ...dynamicRequired].join('\n\n').length;
@@ -456,12 +482,25 @@ abstract final class ContextBuilder {
     final idx = all.indexWhere((c) => c.chapter.id == chapter.chapter.id);
     if (idx <= 0) return;
     final prev = all[idx - 1];
-    var tail = prev.chapter.content.trim();
-    if (tail.isEmpty) return;
-    if (tail.length > neighborTailLength) {
-      tail = tail.substring(tail.length - neighborTailLength);
+    final tailRaw = prev.chapter.content.trim();
+    if (tailRaw.isNotEmpty) {
+      final tail = tailRaw.length > neighborTailLength
+          ? tailRaw.substring(tailRaw.length - neighborTailLength)
+          : tailRaw;
+      required.add('【上一章正文末尾】\n……$tail');
     }
-    required.add('【上一章正文末尾】\n……$tail');
+    final freeze = prev.keyFacts
+        .where((f) => f.startsWith(ChapterLedgerExtraction.sceneFreezePrefix))
+        .map(
+          (f) => f
+              .substring(ChapterLedgerExtraction.sceneFreezePrefix.length)
+              .trim(),
+        )
+        .where((f) => f.isNotEmpty)
+        .firstOrNull;
+    if (freeze != null) {
+      required.add('【上一章结尾定格快照（衣着/持物/姿态锚点）】\n$freeze');
+    }
   }
 
   static void _appendNextOutlineHead(
@@ -518,7 +557,46 @@ abstract final class ContextBuilder {
     final tail = matched.length > limit
         ? matched.sublist(matched.length - limit)
         : matched;
-    return [for (final c in tail) ...c.keyFacts];
+    return [
+      for (final c in tail)
+        for (final f in c.keyFacts)
+          if (!f.startsWith(ChapterLedgerExtraction.sceneFreezePrefix) &&
+              !f.startsWith(ChapterLedgerExtraction.offscreenBeatPrefix))
+            f,
+    ];
+  }
+
+  static List<String> _offscreenBeatsBefore(
+    int globalIndex,
+    NovelBundle bundle,
+    Map<String, int> positions, {
+    required int limit,
+  }) {
+    final matched = bundle.allChaptersInOrder
+        .where(
+          (c) =>
+              c.summary != null &&
+              (positions[c.chapter.id] ?? 0) < globalIndex,
+        )
+        .toList();
+    final tail = matched.length > limit
+        ? matched.sublist(matched.length - limit)
+        : matched;
+    final out = <String>[];
+    for (final c in tail) {
+      final chNo = positions[c.chapter.id] ?? 0;
+      for (final f in c.keyFacts) {
+        if (f.startsWith(ChapterLedgerExtraction.offscreenBeatPrefix)) {
+          final body = f
+              .substring(ChapterLedgerExtraction.offscreenBeatPrefix.length)
+              .trim();
+          if (body.isNotEmpty) {
+            out.add('第$chNo章：$body');
+          }
+        }
+      }
+    }
+    return out;
   }
 
   static String _renderCharacter(db.Character c) {
