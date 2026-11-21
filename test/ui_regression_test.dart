@@ -12,7 +12,10 @@ import 'package:zhiming/core/database/novel_repository.dart';
 import 'package:zhiming/core/platform/background_keep_alive.dart';
 import 'package:zhiming/core/security/api_key_vault.dart';
 import 'package:zhiming/core/storage/blob_store.dart';
+import 'package:zhiming/core/widgets/character_graph_canvas.dart';
+import 'package:zhiming/core/widgets/story_timeline_view.dart';
 import 'package:zhiming/domain/models/source_profile_models.dart';
+import 'package:zhiming/domain/writing/chapter_ledger.dart';
 import 'package:zhiming/features/assistant/assistant_chat_view.dart';
 import 'package:zhiming/features/editor/auto_write_sheet.dart';
 import 'package:zhiming/features/workspace/novel_workspace_page.dart';
@@ -478,12 +481,22 @@ void main() {
 
         await tester.tap(find.text('开发者工坊'));
         await flushAsyncAndPump(tester);
-        expect(find.textContaining('25 套'), findsOneWidget);
+        expect(find.textContaining('31 套'), findsOneWidget);
         await tester.tap(find.text('确认进入'));
         await flushAsyncAndPump(tester);
-        expect(find.text('系统提示词（25）'), findsOneWidget);
+        expect(find.text('系统提示词（31）'), findsOneWidget);
         expect(find.text('5 维事实审稿 · 系统提示词'), findsOneWidget);
-        Navigator.of(tester.element(find.text('系统提示词（25）'))).pop();
+        await tester.scrollUntilVisible(
+          find.text('写作导演 · 电影运镜与景别分层'),
+          300,
+          scrollable: find
+              .byWidgetPredicate(
+                (w) => w is Scrollable && w.axisDirection == AxisDirection.down,
+              )
+              .last,
+        );
+        expect(find.text('写作导演 · 电影运镜与景别分层'), findsOneWidget);
+        Navigator.of(tester.element(find.text('系统提示词（31）'))).pop();
         await flushAsyncAndPump(tester);
 
         // 4) T1.3 (B7): 切换默认模型后设置页实时显示 model-beta；打开新书时编辑器胶囊也为 model-beta
@@ -625,6 +638,113 @@ void main() {
           await flushAsyncAndPump(tester);
         }
         expect(find.text('可改设定'), findsOneWidget);
+
+        await unmountAndDrain(tester);
+      },
+      timeout: const Timeout(Duration(seconds: 30)),
+    );
+
+    testWidgets(
+      'Compact 1024x620 desktop workspace renders CharacterGraph (null camp), StoryTimeline, scene_freeze & offscreen_beats without overflow',
+      (tester) async {
+        tester.view.physicalSize = const Size(1024, 620);
+        tester.view.devicePixelRatio = 1.0;
+        addTearDown(() {
+          tester.view.resetPhysicalSize();
+          tester.view.resetDevicePixelRatio();
+        });
+
+        final repo = NovelRepository(db);
+        late final String novelId;
+        await tester.runAsync(() async {
+          novelId = await repo.createBlankNovel(title: '分屏溢出回归');
+          final volId = (await db.getVolumes(novelId)).single.id;
+          final chId = (await db.getChaptersByVolume(volId)).single.id;
+          await db.upsertCharacter(
+            CharactersCompanion.insert(
+              id: 'c_null_camp',
+              novelId: novelId,
+              name: '无阵营测试角色',
+              physicalState: const Value('左手缠着绷带'),
+            ),
+          );
+          await db.upsertCharacter(
+            CharactersCompanion.insert(
+              id: 'c_null_camp_2',
+              novelId: novelId,
+              name: '老周',
+            ),
+          );
+          await db.upsertCharacterRelation(
+            CharacterRelationsCompanion.insert(
+              id: 'r_1',
+              novelId: novelId,
+              sourceCharacterId: 'c_null_camp',
+              targetCharacterId: 'c_null_camp_2',
+              label: '接头人',
+              updatedAt: DateTime.now(),
+            ),
+          );
+          await db.upsertTimelineEvent(
+            TimelineEventsCompanion.insert(
+              id: 'tl_compact',
+              novelId: novelId,
+              chapterOrder: const Value(1),
+              title: '钟楼停电事件',
+              summary: const Value('雾港三号码头断电。'),
+              createdAt: DateTime.now(),
+            ),
+          );
+          await db.upsertSummary(
+            ChapterSummariesCompanion.insert(
+              chapterId: chId,
+              summaryText: '两人在雨夜仓库核对信封。',
+              keyFactsJson: Value(
+                '["${ChapterLedgerExtraction.sceneFreezePrefix}主角风衣未脱、左手按住桌上怀表","${ChapterLedgerExtraction.offscreenBeatPrefix}东码头巡逻队已封锁渡口"]',
+              ),
+              updatedAt: DateTime.now(),
+            ),
+          );
+        });
+
+        await tester.pumpWidget(
+          ProviderScope(
+            overrides: [
+              appDatabaseProvider.overrideWithValue(db),
+              blobStoreProvider.overrideWithValue(blobs),
+              apiKeyVaultProvider.overrideWithValue(vault),
+              novelRepositoryProvider.overrideWithValue(repo),
+            ],
+            child: MaterialApp(home: NovelWorkspacePage(novelId: novelId)),
+          ),
+        );
+        await flushAsyncAndPump(tester);
+        await flushAsyncAndPump(tester);
+
+        // Right pane displays scene_freeze, offscreen_beats & active character physicalState cleanly
+        expect(find.text('章末定格快照'), findsOneWidget);
+        expect(find.textContaining('左手按住桌上怀表'), findsOneWidget);
+        expect(find.text('场外暗线演化'), findsOneWidget);
+        expect(find.textContaining('东码头巡逻队'), findsOneWidget);
+
+        await tester.tap(find.text('角色与伏笔'));
+        await flushAsyncAndPump(tester);
+        expect(find.textContaining('左手缠着绷带'), findsOneWidget);
+
+        // CharacterGraphCanvas renders without camp! null crash
+        await tester.tap(find.text('设定集'));
+        await flushAsyncAndPump(tester);
+        await tester.tap(find.text('关系图谱'));
+        await flushAsyncAndPump(tester);
+        expect(find.byType(CharacterGraphCanvas), findsOneWidget);
+
+        // StoryTimelineView renders cleanly
+        await tester.tap(find.text('大纲伏笔'));
+        await flushAsyncAndPump(tester);
+        await tester.tap(find.text('故事时间线'));
+        await flushAsyncAndPump(tester);
+        expect(find.byType(StoryTimelineView), findsOneWidget);
+        expect(find.text('钟楼停电事件'), findsOneWidget);
 
         await unmountAndDrain(tester);
       },

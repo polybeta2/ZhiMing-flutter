@@ -366,7 +366,20 @@ class _ChapterEditorWidgetState extends ConsumerState<ChapterEditorWidget> {
                     final labels = dirCfg.activeLabels(
                       r18Enabled: novel?.r18Enabled ?? false,
                     );
-                    if (labels.isEmpty) return const SizedBox.shrink();
+                    if (labels.isEmpty) {
+                      return Padding(
+                        padding: const EdgeInsets.only(top: 4),
+                        child: Text(
+                          '提示：可在「设定集 → 作品信息」按书开启电影运镜 / 活人感 / 防全知 / 深度推演等写作导演开关。',
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: Theme.of(
+                              ctx,
+                            ).colorScheme.onSurfaceVariant,
+                          ),
+                        ),
+                      );
+                    }
                     return Padding(
                       padding: const EdgeInsets.only(top: 4),
                       child: Wrap(
@@ -462,6 +475,7 @@ class _ChapterEditorWidgetState extends ConsumerState<ChapterEditorWidget> {
     final directorBlock = WritingDirectorComposer.composeStaticBlock(
       directorCfg,
       r18Enabled: bundle.novel.r18Enabled,
+      library: lib,
     );
     final budget = PromptTemplates.adjustedInputBudget(
       provider.contextBudgetChars,
@@ -480,6 +494,7 @@ class _ChapterEditorWidgetState extends ConsumerState<ChapterEditorWidget> {
       styleCard: styleCard,
       sourceWindow: sourceWindow,
       directorConfig: directorCfg,
+      promptLibrary: lib,
     );
     var msgs = req.isNewChapter
         ? PromptTemplates.writing(
@@ -1242,124 +1257,155 @@ class _ChapterEditorWidgetState extends ConsumerState<ChapterEditorWidget> {
             child: Row(
               children: [
                 Expanded(
-                  child: Row(
-                    children: [
-                      Flexible(
-                        child: Text(
-                          ch.title,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            fontSize: 15,
-                            fontWeight: FontWeight.w600,
+                  child: SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        ConstrainedBox(
+                          constraints: const BoxConstraints(maxWidth: 220),
+                          child: Text(
+                            ch.title,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.w600,
+                            ),
                           ),
                         ),
-                      ),
-                      const SizedBox(width: 8),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 8,
-                          vertical: 2,
-                        ),
-                        decoration: BoxDecoration(
-                          color: cs.surfaceContainerHighest,
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: Text(
-                          '${_textCtrl.text.length} 字',
-                          style: TextStyle(
-                            fontSize: 11,
-                            color: cs.onSurfaceVariant,
-                            fontFeatures: const [FontFeature.tabularFigures()],
-                          ),
-                        ),
-                      ),
-                      if (ch.isOriginal) ...[
-                        const SizedBox(width: 6),
+                        const SizedBox(width: 8),
                         Container(
                           padding: const EdgeInsets.symmetric(
                             horizontal: 8,
                             vertical: 2,
                           ),
                           decoration: BoxDecoration(
-                            color: Colors.purple.withValues(alpha: 0.14),
+                            color: cs.surfaceContainerHighest,
                             borderRadius: BorderRadius.circular(12),
                           ),
-                          child: const Text(
-                            '原作 · 只读',
+                          child: Text(
+                            '${_textCtrl.text.length} 字',
                             style: TextStyle(
                               fontSize: 11,
-                              color: Colors.purple,
-                              fontWeight: FontWeight.w600,
+                              color: cs.onSurfaceVariant,
+                              fontFeatures: const [
+                                FontFeature.tabularFigures(),
+                              ],
                             ),
                           ),
                         ),
+                        if (ch.isOriginal) ...[
+                          const SizedBox(width: 6),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 2,
+                            ),
+                            decoration: BoxDecoration(
+                              color: Colors.purple.withValues(alpha: 0.14),
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: const Text(
+                              '原作 · 只读',
+                              style: TextStyle(
+                                fontSize: 11,
+                                color: Colors.purple,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                        ],
                       ],
-                    ],
-                  ),
-                ),
-                // 模型胶囊
-                ActionChip(
-                  avatar: const Icon(Icons.memory_rounded, size: 15),
-                  label: ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: 110),
-                    child: Text(
-                      activeProvider?.modelName ?? '未配模型',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(fontSize: 12),
                     ),
                   ),
-                  visualDensity: VisualDensity.compact,
-                  onPressed: () async {
-                    final picked = await showModelSelectorSheet(
-                      context,
-                      ref: ref,
-                      currentSessionProvider: _sessionProvider,
-                    );
-                    if (mounted) setState(() => _sessionProvider = picked);
-                  },
                 ),
-                const SizedBox(width: 4),
-                IconButton(
-                  tooltip: '会话文风',
-                  icon: Icon(
-                    Icons.text_format_rounded,
-                    size: 20,
-                    color: _sessionStyle is OffSessionStyle
-                        ? cs.onSurfaceVariant.withValues(alpha: 0.4)
-                        : cs.primary,
-                  ),
-                  onPressed: _openSessionStylePicker,
-                ),
-                IconButton(
-                  tooltip: '查找与替换 (Ctrl+F)',
-                  icon: const Icon(Icons.find_replace_rounded, size: 20),
-                  onPressed: () =>
-                      setState(() => _showFindBar = !_showFindBar),
-                ),
-                IconButton(
-                  tooltip: '排版与纸感',
-                  icon: const Icon(Icons.format_size_rounded, size: 20),
-                  onPressed: _openTypographySheet,
-                ),
-                IconButton(
-                  tooltip: '版本快照',
-                  icon: const Icon(Icons.history_rounded, size: 20),
-                  onPressed: _openSnapshots,
-                ),
-                if (widget.onToggleReferencePane != null)
-                  IconButton(
-                    tooltip: '对照参考栏（细纲/角色/伏笔）',
-                    icon: Icon(
-                      widget.referencePaneOpen
-                          ? Icons.vertical_split_rounded
-                          : Icons.vertical_split_outlined,
-                      size: 20,
-                      color: widget.referencePaneOpen ? cs.primary : null,
+                // 模型胶囊与工具按钮（窄屏/分屏自动横向滚动防溢出）
+                Flexible(
+                  flex: 2,
+                  child: Align(
+                    alignment: Alignment.centerRight,
+                    child: SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          ActionChip(
+                            avatar: const Icon(Icons.memory_rounded, size: 15),
+                            label: ConstrainedBox(
+                              constraints: const BoxConstraints(maxWidth: 110),
+                              child: Text(
+                                activeProvider?.modelName ?? '未配模型',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(fontSize: 12),
+                              ),
+                            ),
+                            visualDensity: VisualDensity.compact,
+                            onPressed: () async {
+                              final picked = await showModelSelectorSheet(
+                                context,
+                                ref: ref,
+                                currentSessionProvider: _sessionProvider,
+                              );
+                              if (mounted) {
+                                setState(() => _sessionProvider = picked);
+                              }
+                            },
+                          ),
+                          const SizedBox(width: 4),
+                          IconButton(
+                            tooltip: '会话文风',
+                            icon: Icon(
+                              Icons.text_format_rounded,
+                              size: 20,
+                              color: _sessionStyle is OffSessionStyle
+                                  ? cs.onSurfaceVariant.withValues(alpha: 0.4)
+                                  : cs.primary,
+                            ),
+                            onPressed: _openSessionStylePicker,
+                          ),
+                          IconButton(
+                            tooltip: '查找与替换 (Ctrl+F)',
+                            icon: const Icon(
+                              Icons.find_replace_rounded,
+                              size: 20,
+                            ),
+                            onPressed: () =>
+                                setState(() => _showFindBar = !_showFindBar),
+                          ),
+                          IconButton(
+                            tooltip: '排版与纸感',
+                            icon: const Icon(
+                              Icons.format_size_rounded,
+                              size: 20,
+                            ),
+                            onPressed: _openTypographySheet,
+                          ),
+                          IconButton(
+                            tooltip: '版本快照',
+                            icon: const Icon(Icons.history_rounded, size: 20),
+                            onPressed: _openSnapshots,
+                          ),
+                          if (widget.onToggleReferencePane != null)
+                            IconButton(
+                              tooltip: '对照参考栏（细纲/角色/伏笔）',
+                              icon: Icon(
+                                widget.referencePaneOpen
+                                    ? Icons.vertical_split_rounded
+                                    : Icons.vertical_split_outlined,
+                                size: 20,
+                                color: widget.referencePaneOpen
+                                    ? cs.primary
+                                    : null,
+                              ),
+                              onPressed: widget.onToggleReferencePane,
+                            ),
+                        ],
+                      ),
                     ),
-                    onPressed: widget.onToggleReferencePane,
                   ),
+                ),
               ],
             ),
           ),
@@ -1505,8 +1551,15 @@ class _ChapterEditorWidgetState extends ConsumerState<ChapterEditorWidget> {
                         if (_summarizing) ...[
                           Row(
                             children: [
-                              StreamingStatusChip(tracker: _summaryProgress),
-                              const Spacer(),
+                              Expanded(
+                                child: Align(
+                                  alignment: Alignment.centerLeft,
+                                  child: StreamingStatusChip(
+                                    tracker: _summaryProgress,
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 6),
                               TextButton(
                                 onPressed: () => _summaryCancel?.cancel(),
                                 child: const Text('停止建档'),
@@ -1650,18 +1703,26 @@ class _ChapterEditorWidgetState extends ConsumerState<ChapterEditorWidget> {
         children: [
           Row(
             children: [
-              Text(
-                _lastRewrite != null
-                    ? 'AI 精修草稿（${_lastRewrite!.mode}）'
-                    : 'AI 写作草稿',
-                style: const TextStyle(fontWeight: FontWeight.w600),
+              Expanded(
+                child: Wrap(
+                  spacing: 8,
+                  runSpacing: 4,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: [
+                    Text(
+                      _lastRewrite != null
+                          ? 'AI 精修草稿（${_lastRewrite!.mode}）'
+                          : 'AI 写作草稿',
+                      style: const TextStyle(fontWeight: FontWeight.w600),
+                    ),
+                    StreamingStatusChip(
+                      tracker: _draftProgress,
+                      hideWhenOutputting: true,
+                    ),
+                  ],
+                ),
               ),
               const SizedBox(width: 8),
-              StreamingStatusChip(
-                tracker: _draftProgress,
-                hideWhenOutputting: true,
-              ),
-              const Spacer(),
               Text(
                 '${_draft.length} 字',
                 style: TextStyle(fontSize: 12, color: cs.onSurfaceVariant),
@@ -1694,31 +1755,34 @@ class _ChapterEditorWidgetState extends ConsumerState<ChapterEditorWidget> {
             ),
           ),
           const SizedBox(height: 8),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.end,
-            children: [
-              if (_streaming)
-                FilledButton.tonal(
-                  onPressed: () => _draftCancel?.cancel(),
-                  child: const Text('停止生成'),
-                )
-              else ...[
-                TextButton(
-                  onPressed: _resetDraft,
-                  child: const Text('放弃'),
-                ),
-                const SizedBox(width: 6),
-                OutlinedButton(
-                  onPressed: _regenerate,
-                  child: const Text('重新生成'),
-                ),
-                const SizedBox(width: 6),
-                FilledButton(
-                  onPressed: _draft.isEmpty ? null : _acceptDraft,
-                  child: Text(_lastRewrite != null ? 'Diff 对比并替换' : '采纳到正文'),
-                ),
+          Align(
+            alignment: Alignment.centerRight,
+            child: Wrap(
+              spacing: 6,
+              runSpacing: 6,
+              alignment: WrapAlignment.end,
+              children: [
+                if (_streaming)
+                  FilledButton.tonal(
+                    onPressed: () => _draftCancel?.cancel(),
+                    child: const Text('停止生成'),
+                  )
+                else ...[
+                  TextButton(
+                    onPressed: _resetDraft,
+                    child: const Text('放弃'),
+                  ),
+                  OutlinedButton(
+                    onPressed: _regenerate,
+                    child: const Text('重新生成'),
+                  ),
+                  FilledButton(
+                    onPressed: _draft.isEmpty ? null : _acceptDraft,
+                    child: Text(_lastRewrite != null ? 'Diff 对比并替换' : '采纳到正文'),
+                  ),
+                ],
               ],
-            ],
+            ),
           ),
         ],
       ),
@@ -2061,6 +2125,44 @@ class _LedgerConfirmDialogState extends State<_LedgerConfirmDialog> {
                         color: cs.onSurfaceVariant,
                       ),
                     ),
+                    if ((e.sceneFreeze ?? '').trim().isNotEmpty) ...[
+                      const SizedBox(height: 8),
+                      Text(
+                        '章末定格快照（下章衣着/持物/姿态衔接锚点）',
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                          color: cs.primary,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        e.sceneFreeze!,
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: cs.onSurfaceVariant,
+                        ),
+                      ),
+                    ],
+                    if (e.offscreenBeats.isNotEmpty) ...[
+                      const SizedBox(height: 8),
+                      Text(
+                        '场外暗线演化',
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                          color: cs.tertiary,
+                        ),
+                      ),
+                      for (final beat in e.offscreenBeats)
+                        Text(
+                          '· $beat',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: cs.onSurfaceVariant,
+                          ),
+                        ),
+                    ],
                   ],
                 ),
               ),

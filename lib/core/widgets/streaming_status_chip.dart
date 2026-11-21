@@ -51,11 +51,15 @@ class StreamingStatusChip extends StatelessWidget {
               const SizedBox(width: 8),
               Icon(icon, size: 15, color: cs.primary),
               const SizedBox(width: 6),
-              Text(
-                state.statusText,
-                style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                  color: cs.onPrimaryContainer,
-                  fontFeatures: const [FontFeature.tabularFigures()],
+              Flexible(
+                child: Text(
+                  state.statusText,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                    color: cs.onPrimaryContainer,
+                    fontFeatures: const [FontFeature.tabularFigures()],
+                  ),
                 ),
               ),
             ],

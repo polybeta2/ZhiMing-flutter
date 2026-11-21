@@ -170,6 +170,7 @@ class _AutoWriteSheetState extends ConsumerState<AutoWriteSheet> {
         final directorBlock = WritingDirectorComposer.composeStaticBlock(
           directorCfg,
           r18Enabled: bundle.novel.r18Enabled,
+          library: lib,
         );
         final budget = PromptTemplates.adjustedInputBudget(
           provider.contextBudgetChars,
@@ -188,6 +189,7 @@ class _AutoWriteSheetState extends ConsumerState<AutoWriteSheet> {
           styleCard: styleCard,
           sourceWindow: sourceWindow,
           directorConfig: directorCfg,
+          promptLibrary: lib,
         );
         var writeMsgs = PromptTemplates.writing(
           library: lib,

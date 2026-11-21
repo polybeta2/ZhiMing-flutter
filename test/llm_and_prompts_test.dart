@@ -77,15 +77,21 @@ void main() {
   });
 
   group('PromptLibrary & PromptLimits & PromptTemplates', () {
-    test('locks all critical guardrail constants & 25 built-in prompts', () {
+    test('locks all critical guardrail constants & 31 built-in prompts', () {
       expect(PromptLimits.maxOverrideChars, 20000);
       expect(PromptLimits.matchedSupplementCap, 8000);
       expect(PromptLimits.r18ModuleCharBudget, 12000);
       expect(PromptLimits.requiredFieldCap, 4000);
       expect(PromptLimits.requestWarnChars, 80000);
-      expect(PromptDefaults.builtInPrompts.length, 25);
+      expect(PromptDefaults.builtInPrompts.length, 31);
       expect(
         PromptDefaults.builtInPrompts.any((p) => p.id == PromptID.factReview),
+        isTrue,
+      );
+      expect(
+        PromptDefaults.builtInPrompts.any(
+          (p) => p.id == PromptID.directorCinematic,
+        ),
         isTrue,
       );
       expect(

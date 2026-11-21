@@ -106,12 +106,14 @@ abstract final class CharacterGraphLayout {
     // 按阵营划分扇区，核心角色居中、其余按阵营扇区分布
     final camps = <String>[];
     for (final n in nodes) {
-      final c = (n.camp ?? '独立').trim().isEmpty ? '独立' : n.camp!.trim();
+      final rawCamp = n.camp?.trim() ?? '';
+      final c = rawCamp.isEmpty ? '独立' : rawCamp;
       if (!camps.contains(c)) camps.add(c);
     }
     final byCamp = <String, List<GraphNode>>{};
     for (final n in nodes) {
-      final c = (n.camp ?? '独立').trim().isEmpty ? '独立' : n.camp!.trim();
+      final rawCamp = n.camp?.trim() ?? '';
+      final c = rawCamp.isEmpty ? '独立' : rawCamp;
       byCamp.putIfAbsent(c, () => []).add(n);
     }
 

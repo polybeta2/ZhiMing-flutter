@@ -19,7 +19,7 @@ abstract final class PromptLimits {
   static const int styleEvidenceCap = 80;
 }
 
-/// 25 套稳定内置提示词 ID 常量
+/// 31 套稳定内置提示词 ID 常量
 abstract final class PromptID {
   static const String continueWriting = 'prompt.continue.system';
   static const String writing = 'prompt.writing.system';
@@ -51,6 +51,12 @@ abstract final class PromptID {
   static const String styleDistillCard = 'prompt.style.distill.card.system';
   static const String styleDistillFix = 'prompt.style.distill.fix.system';
   static const String styleEval = 'prompt.style.eval.system';
+  static const String directorCinematic = 'prompt.director.cinematic';
+  static const String directorPureSensory = 'prompt.director.sensory';
+  static const String directorR18Gentle = 'prompt.director.r18.gentle';
+  static const String directorR18Soothing = 'prompt.director.r18.soothing';
+  static const String directorR18Intense = 'prompt.director.r18.intense';
+  static const String directorR18Gate = 'prompt.director.r18.gate';
 }
 
 class BuiltInPrompt {

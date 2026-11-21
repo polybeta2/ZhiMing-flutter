@@ -4,6 +4,9 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:zhiming/core/database/app_database.dart';
 import 'package:zhiming/core/database/novel_repository.dart';
+import 'package:zhiming/core/prompts/prompt_library.dart';
+import 'package:zhiming/core/prompts/prompt_limits.dart';
+import 'package:zhiming/core/widgets/character_graph_canvas.dart';
 import 'package:zhiming/domain/writing/chapter_ledger.dart';
 import 'package:zhiming/domain/writing/context_builder.dart';
 import 'package:zhiming/domain/writing/prose_checker.dart';
@@ -78,6 +81,19 @@ void main() {
       expect(withR18, contains('舒缓克制'));
       expect(withR18, contains('防日常发情门控'));
       expect(withR18, contains('亲密台词声感'));
+
+      // 开发者工坊覆写 PromptID.directorCinematic 后立即生效
+      const customLib = PromptLibraryState(
+        overrides: {
+          PromptID.directorCinematic: '【自定义电影运镜覆写】长镜头慢推不切镜。',
+        },
+      );
+      final overridden = WritingDirectorComposer.composeStaticBlock(
+        cfg,
+        r18Enabled: false,
+        library: customLib,
+      );
+      expect(overridden, contains('【自定义电影运镜覆写】长镜头慢推不切镜。'));
     });
 
     test('persists per-novel config and cleans up on delete', () async {
@@ -208,6 +224,19 @@ void main() {
       expect(keyFactsSection, contains('陆深拿到钟楼三号铜钥匙'));
       expect(keyFactsSection, isNot(contains(ChapterLedgerExtraction.sceneFreezePrefix)));
       expect(keyFactsSection, isNot(contains(ChapterLedgerExtraction.offscreenBeatPrefix)));
+    });
+
+    test('CharacterGraphLayout.compute handles null and blank camp without throwing', () {
+      const nodes = [
+        GraphNode(id: 'c1', name: '陆深', camp: null),
+        GraphNode(id: 'c2', name: '老周', camp: '  '),
+        GraphNode(id: 'c3', name: '沈默', camp: '暗桩'),
+      ];
+      const edges = [
+        GraphEdge(id: 'e1', fromId: 'c1', toId: 'c2', label: '合作', relationType: '盟友'),
+      ];
+      final pos = CharacterGraphLayout.compute(nodes, edges);
+      expect(pos.keys, containsAll(['c1', 'c2', 'c3']));
     });
   });
 }

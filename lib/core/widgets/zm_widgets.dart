@@ -107,38 +107,40 @@ class ZmEmptyState extends StatelessWidget {
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     return Center(
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 360),
-        child: Padding(
-          padding: const EdgeInsets.all(AppTokens.s6),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(icon, size: 48, color: cs.onSurfaceVariant.withValues(alpha: 0.6)),
-              const SizedBox(height: AppTokens.s3),
-              Text(
-                title,
-                textAlign: TextAlign.center,
-                style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-              if (description != null && description!.isNotEmpty) ...[
-                const SizedBox(height: AppTokens.s2),
+      child: SingleChildScrollView(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 360),
+          child: Padding(
+            padding: const EdgeInsets.all(AppTokens.s6),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(icon, size: 48, color: cs.onSurfaceVariant.withValues(alpha: 0.6)),
+                const SizedBox(height: AppTokens.s3),
                 Text(
-                  description!,
+                  title,
                   textAlign: TextAlign.center,
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: cs.onSurfaceVariant,
-                    height: 1.5,
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.w600,
                   ),
                 ),
+                if (description != null && description!.isNotEmpty) ...[
+                  const SizedBox(height: AppTokens.s2),
+                  Text(
+                    description!,
+                    textAlign: TextAlign.center,
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: cs.onSurfaceVariant,
+                      height: 1.5,
+                    ),
+                  ),
+                ],
+                if (action != null) ...[
+                  const SizedBox(height: AppTokens.s4),
+                  action!,
+                ],
               ],
-              if (action != null) ...[
-                const SizedBox(height: AppTokens.s4),
-                action!,
-              ],
-            ],
+            ),
           ),
         ),
       ),

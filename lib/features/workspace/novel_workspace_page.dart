@@ -7,6 +7,8 @@ import '../../core/database/novel_repository.dart';
 import '../../core/theme/design_tokens.dart';
 import '../../core/widgets/zm_widgets.dart';
 import '../../domain/models/novel_domain.dart';
+import '../../domain/writing/chapter_ledger.dart';
+import '../../domain/writing/writing_director_config.dart';
 import '../editor/auto_write_sheet.dart';
 import '../editor/chapter_editor_widget.dart';
 import '../outline/outline_and_foreshadow_view.dart';
@@ -593,6 +595,110 @@ class _DesktopReferencePane extends ConsumerWidget {
                               ),
                             ),
                         ],
+                        StreamBuilder<ChapterSummary?>(
+                          stream: db.watchSummary(chapterId),
+                          builder: (context, sumSnap) {
+                            final summary = sumSnap.data;
+                            if (summary == null) return const SizedBox.shrink();
+                            final facts = decodeStringList(
+                              summary.keyFactsJson,
+                            );
+                            final freeze = facts
+                                .where(
+                                  (f) => f.startsWith(
+                                    ChapterLedgerExtraction.sceneFreezePrefix,
+                                  ),
+                                )
+                                .map(
+                                  (f) => f
+                                      .substring(
+                                        ChapterLedgerExtraction
+                                            .sceneFreezePrefix
+                                            .length,
+                                      )
+                                      .trim(),
+                                )
+                                .where((f) => f.isNotEmpty)
+                                .firstOrNull;
+                            final offscreen = facts
+                                .where(
+                                  (f) => f.startsWith(
+                                    ChapterLedgerExtraction.offscreenBeatPrefix,
+                                  ),
+                                )
+                                .map(
+                                  (f) => f
+                                      .substring(
+                                        ChapterLedgerExtraction
+                                            .offscreenBeatPrefix
+                                            .length,
+                                      )
+                                      .trim(),
+                                )
+                                .where((f) => f.isNotEmpty)
+                                .toList();
+                            if (freeze == null && offscreen.isEmpty) {
+                              return const SizedBox.shrink();
+                            }
+                            return Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                if (freeze != null) ...[
+                                  const SizedBox(height: 14),
+                                  Text(
+                                    '章末定格快照',
+                                    style: Theme.of(context)
+                                        .textTheme
+                                        .labelLarge
+                                        ?.copyWith(fontWeight: FontWeight.w600),
+                                  ),
+                                  const SizedBox(height: 6),
+                                  Container(
+                                    width: double.infinity,
+                                    padding: const EdgeInsets.all(10),
+                                    decoration: BoxDecoration(
+                                      color: cs.primaryContainer.withValues(
+                                        alpha: 0.35,
+                                      ),
+                                      borderRadius: BorderRadius.circular(8),
+                                    ),
+                                    child: Text(
+                                      freeze,
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        height: 1.45,
+                                        color: cs.onSurfaceVariant,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                                if (offscreen.isNotEmpty) ...[
+                                  const SizedBox(height: 14),
+                                  Text(
+                                    '场外暗线演化',
+                                    style: Theme.of(context)
+                                        .textTheme
+                                        .labelLarge
+                                        ?.copyWith(fontWeight: FontWeight.w600),
+                                  ),
+                                  const SizedBox(height: 6),
+                                  for (final b in offscreen)
+                                    Padding(
+                                      padding: const EdgeInsets.only(bottom: 4),
+                                      child: Text(
+                                        '· $b',
+                                        style: TextStyle(
+                                          fontSize: 12,
+                                          height: 1.45,
+                                          color: cs.onSurfaceVariant,
+                                        ),
+                                      ),
+                                    ),
+                                ],
+                              ],
+                            );
+                          },
+                        ),
                       ],
                     );
                   },
@@ -642,6 +748,8 @@ class _DesktopReferencePane extends ConsumerWidget {
                                         '目标：${c.currentGoal}',
                                       if ((c.currentLocation ?? '').isNotEmpty)
                                         '位置：${c.currentLocation}',
+                                      if ((c.physicalState ?? '').isNotEmpty)
+                                        '状态：${c.physicalState}',
                                     ].join(' · '),
                                     style: const TextStyle(fontSize: 11),
                                   ),
@@ -692,6 +800,56 @@ class _DesktopReferencePane extends ConsumerWidget {
                                         )
                                       : null,
                                 ),
+                              ),
+                          ],
+                        );
+                      },
+                    ),
+                    const SizedBox(height: 14),
+                    Builder(
+                      builder: (context) {
+                        final dirCfg = ref.watch(
+                          writingDirectorProvider(novelId),
+                        );
+                        final novel = ref
+                            .watch(novelStreamProvider(novelId))
+                            .valueOrNull;
+                        final labels = dirCfg.activeLabels(
+                          r18Enabled: novel?.r18Enabled ?? false,
+                        );
+                        return Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              '写作导演开关',
+                              style: Theme.of(context).textTheme.labelLarge
+                                  ?.copyWith(fontWeight: FontWeight.w600),
+                            ),
+                            const SizedBox(height: 6),
+                            if (labels.isEmpty)
+                              Text(
+                                '全部关闭（0 Token · 可在设定集开启）',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: cs.onSurfaceVariant,
+                                ),
+                              )
+                            else
+                              Wrap(
+                                spacing: 6,
+                                runSpacing: 4,
+                                children: [
+                                  for (final l in labels)
+                                    Chip(
+                                      label: Text(
+                                        l,
+                                        style: const TextStyle(fontSize: 11),
+                                      ),
+                                      visualDensity: VisualDensity.compact,
+                                      materialTapTargetSize:
+                                          MaterialTapTargetSize.shrinkWrap,
+                                    ),
+                                ],
                               ),
                           ],
                         );

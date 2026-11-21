@@ -1,4 +1,5 @@
 import '../../core/database/app_database.dart' as db;
+import '../../core/prompts/prompt_library.dart';
 import '../../core/prompts/prompt_limits.dart';
 import '../models/novel_domain.dart';
 import 'chapter_ledger.dart';
@@ -54,6 +55,7 @@ abstract final class ContextBuilder {
     String? styleCard,
     String? sourceWindow,
     WritingDirectorConfig? directorConfig,
+    PromptLibraryState promptLibrary = const PromptLibraryState(),
   }) {
     final staticRequired = <String>[];
     final dynamicRequired = <String>[];
@@ -72,6 +74,7 @@ abstract final class ContextBuilder {
       final directorBlock = WritingDirectorComposer.composeStaticBlock(
         directorConfig,
         r18Enabled: bundle.novel.r18Enabled,
+        library: promptLibrary,
       );
       if (directorBlock.isNotEmpty) {
         staticRequired.add(directorBlock);

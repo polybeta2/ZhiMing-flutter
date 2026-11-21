@@ -1,3 +1,5 @@
+import '../../core/prompts/prompt_library.dart';
+import '../../core/prompts/prompt_limits.dart';
 import 'writing_director_config.dart';
 
 /// 单条动态写前思考步骤（按 [order] 从小到大排序拼装，类似可插拔导演清单）。
@@ -10,12 +12,14 @@ class DirectorThinkingStep {
 
 /// 写作导演指令拼装器：
 /// - 全部未启用时严格返回空字符串（0 Token 消耗）；
-/// - 开启模块后按职责拼装为 KV-Cache 友好的静态规则块，并按权重动态生成静默写前推演清单。
+/// - 开启模块后按职责拼装为 KV-Cache 友好的静态规则块，并按权重动态生成静默写前推演清单；
+/// - 核心镜头与 R18 档位文案走 [PromptLibraryState]，支持在「开发者工坊」实时覆写与恢复默认。
 abstract final class WritingDirectorComposer {
   /// 拼装写作/续写阶段的静态导演指令块（置于 System 消息 staticPrefix）。
   static String composeStaticBlock(
     WritingDirectorConfig cfg, {
     required bool r18Enabled,
+    PromptLibraryState library = const PromptLibraryState(),
   }) {
     if (!cfg.hasActiveRules(r18Enabled: r18Enabled)) return '';
 
@@ -26,18 +30,9 @@ abstract final class WritingDirectorComposer {
       case ProseCameraMode.none:
         break;
       case ProseCameraMode.cinematic:
-        craftRules.add(
-          '【电影运镜与景别分层】\n'
-          '- 新场景切换时采用电影运镜由远及近：先确立整体空间、光影与声味，再推至角色所在的局部细节；从段中接续时自然承接上文，不必强行以环境描写起笔。\n'
-          '- 角色首次出场需细致勾勒具区分度的外貌、衣着与随身特征；在新场景再次出场时仅保留 1-2 个核心标志物入镜，勿重复全套人设。\n'
-          '- 动作分景别处理：远景一笔带过，近景拆解先后步骤，特写进一步落到动作力度、节奏与局部外观；严禁在动作或台词后直接解释其蕴含的情绪或意图。',
-        );
+        craftRules.add(library.resolvedText(PromptID.directorCinematic));
       case ProseCameraMode.pureSensory:
-        craftRules.add(
-          '【纯五感写实】\n'
-          '- 画面聚焦视觉、听觉、嗅觉、触觉与可见物理特征，压低心理旁白与主观评判。\n'
-          '- 情绪与气氛全部藏在动作停顿、呼吸变化与环境反差下；若某细微情绪「只有一丝」或「不易察觉」，则不要用上帝视角替读者说破。',
-        );
+        craftRules.add(library.resolvedText(PromptID.directorPureSensory));
     }
 
     if (cfg.livingHumanFeel) {
@@ -76,22 +71,14 @@ abstract final class WritingDirectorComposer {
       final r18Lines = <String>[];
       switch (cfg.r18StylePreset) {
         case R18StylePreset.gentleDetail:
-          r18Lines.add(
-            '- 亲密场景基调【温柔重细节】：拒绝粗暴或强硬施虐式写法，禁止一笔带过或草草结束；注重五感细节、接触节奏与贴合人物的亲密交流，表达直白自然，严禁使用「检查/培训/科学报告」式生硬绕弯腔。',
-          );
+          r18Lines.add(library.resolvedText(PromptID.directorR18Gentle));
         case R18StylePreset.soothingRestrained:
-          r18Lines.add(
-            '- 亲密场景基调【舒缓克制】：全程保持温柔舒缓，大幅弱化剧烈生理反应（避免身体反弓、剧烈颤抖、尖叫、痉挛等高烈度套话），重点放在细微触感、呼吸节律与情感流动；表达直白不绕弯。',
-          );
+          r18Lines.add(library.resolvedText(PromptID.directorR18Soothing));
         case R18StylePreset.explicitIntense:
-          r18Lines.add(
-            '- 亲密场景基调【直白浓烈】：保留充分的五感、体感与互动细节，不淡出、不敷衍一笔带过，语言直白具象，严禁以临床报告或隐晦说教替代具体行动，同时保持人物性格连贯。',
-          );
+          r18Lines.add(library.resolvedText(PromptID.directorR18Intense));
       }
       if (cfg.r18StrictOutlineGate) {
-        r18Lines.add(
-          '- 【防日常发情门控】：仅当【本章细纲】或作者附加指令明确要求亲密/情色推进时才进入相关场景；普通日常、对话或剧情推进章严禁主动往擦边方向引导；当细纲示意亲密环节结束时应自然利落收束退出。',
-        );
+        r18Lines.add(library.resolvedText(PromptID.directorR18Gate));
       }
       if (cfg.r18IntimateDialogue) {
         r18Lines.add(

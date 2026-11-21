@@ -287,7 +287,7 @@ class SettingsPage extends ConsumerWidget {
                       ),
                       const SizedBox(height: AppTokens.s3),
                       Text(
-                        '版本 3.0.0 (Flutter) · SQLite 本地事务存储 · API Key 仅存系统安全密钥库',
+                        '版本 3.1.0 (Flutter) · SQLite 本地事务存储 · API Key 仅存系统安全密钥库',
                         style: Theme.of(context).textTheme.bodySmall?.copyWith(
                           color: cs.onSurfaceVariant,
                         ),
