@@ -1,6 +1,12 @@
 import 'dart:convert';
+import 'dart:io';
 
+import 'package:dio/dio.dart';
+import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:zhiming/core/database/app_database.dart';
+import 'package:zhiming/core/llm/llm_types.dart';
+import 'package:zhiming/core/storage/blob_store.dart';
 import 'package:zhiming/domain/models/source_profile_models.dart';
 import 'package:zhiming/domain/source/novel_local_indexer.dart';
 import 'package:zhiming/domain/source/source_batch_helper.dart';
@@ -8,6 +14,7 @@ import 'package:zhiming/domain/source/source_graph_aggregator.dart';
 import 'package:zhiming/domain/source/source_graph_reducer.dart';
 import 'package:zhiming/domain/source/source_micro_summarizer.dart';
 import 'package:zhiming/domain/source/source_scan_chunker.dart';
+import 'package:zhiming/features/source_archive/source_scan_controller.dart';
 
 void main() {
   group('SourceNovelProfileData v2 additive contract', () {
@@ -375,4 +382,189 @@ void main() {
       expect(clues[1].plantedChapter, 249);
     });
   });
+
+  group('SourceScanController Graph-Reduce E2E', () {
+    test('runs concurrent map + 4-pass graph reduce with zero chapter loss and checkpoints', () async {
+      TestWidgetsFlutterBinding.ensureInitialized();
+      final db = AppDatabase(NativeDatabase.memory());
+      final tmp = await Directory.systemTemp.createTemp('zm_graph_scan_');
+      addTearDown(() async {
+        await db.close();
+        if (await tmp.exists()) await tmp.delete(recursive: true);
+      });
+
+      final stub = _GraphScanStubClient();
+      final ctrl = SourceScanController(
+        db: db,
+        blobs: BlobStore(baseDirOverride: tmp),
+        client: stub,
+        provider: ProviderRecord(
+          id: 'prov-1',
+          name: 'Test',
+          baseUrl: 'https://example.com/v1',
+          apiKeyId: 'k1',
+          modelName: 'test-model',
+          temperature: 0.2,
+          maxTokens: 16384,
+          contextBudgetChars: 60000,
+          isDefault: true,
+          createdAt: DateTime(2026),
+        ),
+      );
+
+      final book = List.generate(
+        6,
+        (i) => '第${i + 1}章 章节${i + 1}\n莫烬与罗娜在群星之城探索银色怀表的秘密。',
+      ).join('\n\n');
+
+      await ctrl.start(
+        sourceText: book,
+        title: '测试长篇',
+        mode: ScanMode.full,
+        batchSize: 3,
+        concurrency: 2,
+        isContinuation: true,
+      );
+
+      expect(ctrl.phase, ScanPhase.done, reason: ctrl.errorMessage);
+      final profile = ctrl.resultProfile!;
+      expect(profile.meta.totalChapters, 6);
+      expect(profile.characters.map((c) => c.name), containsAll(['莫烬', '罗娜']));
+      expect(profile.relations, isNotEmpty);
+      expect(profile.relations.first.from, '莫烬');
+      expect(profile.openThreads.length, 2);
+      expect(
+        profile.openThreads.any(
+          (t) => t.status == 'resolved' && t.resolvedChapter == 6,
+        ),
+        isTrue,
+      );
+      expect(profile.timeline, isNotEmpty);
+      expect(profile.timeline.first.chapterStart, 1);
+      ctrl.dispose();
+    });
+  });
+}
+
+class _GraphScanStubClient implements LLMClient {
+  @override
+  Stream<StreamEvent> streamChat(
+    List<LLMMessage> messages, {
+    required GenerationConfig config,
+    CancelToken? cancelToken,
+  }) async* {
+    final joined = messages.map((m) => m.content).join('\n');
+    if (joined.contains('增量式微摘要')) {
+      final matches = RegExp(r'chapter=(\d+)').allMatches(joined);
+      final chNos = matches.map((m) => int.parse(m.group(1)!)).toSet().toList()
+        ..sort();
+      final lines = [
+        for (final n in chNos)
+          jsonEncode({
+            'chapter': n,
+            'characters': [
+              {
+                'name': '莫烬',
+                'aliases': ['末路灰烬'],
+                'traits': '冷静',
+                'state_change': '第$n章行动',
+              },
+              {
+                'name': n == 6 ? '小黑猫' : '罗娜',
+                'camp_hint': '群星之城',
+                'traits': '城主',
+              },
+            ],
+            'relations': [
+              {
+                'from': '莫烬',
+                'to': n == 6 ? '小黑猫' : '罗娜',
+                'relation': '托付群星之城',
+                'kind': '盟友',
+                'line': '暗线',
+              },
+            ],
+            'events': [
+              {
+                'summary': '第$n章探索银色怀表',
+                'in_world_time': '第$n天',
+                'participants': ['莫烬', n == 6 ? '小黑猫' : '罗娜'],
+                'importance': 'major',
+              },
+            ],
+            'worldbuilding': [
+              {'name': '群星之城', 'category': '地点', 'content': '庇护所'},
+            ],
+            'foreshadowing': [
+              if (n == 1)
+                {
+                  'summary': '银色怀表的真实来历',
+                  'planted': true,
+                  'characters': ['莫烬'],
+                },
+              if (n == 1)
+                {
+                  'summary': '罗娜铃铛的秘密',
+                  'planted': true,
+                  'characters': ['罗娜'],
+                },
+              if (n == 6)
+                {
+                  'summary': '铃铛权柄移交揭晓',
+                  'planted': false,
+                  'characters': ['小黑猫'],
+                  'target_hint': '罗娜铃铛的秘密',
+                },
+            ],
+          }),
+      ];
+      yield ContentDelta(lines.join('\n'));
+      return;
+    }
+    if (joined.contains('not_characters')) {
+      yield const ContentDelta(
+        '{"camps":[{"name":"群星之城","stance":"中立","brief":"庇护所"}],'
+        '"characters":[{"name":"莫烬","aliases":["末路灰烬"],"role":"主角","camp":"独立","stance":"主角方","importance":"major"},'
+        '{"name":"罗娜","aliases":["小黑猫"],"role":"核心配角","camp":"群星之城","stance":"主角方","importance":"major"}],'
+        '"not_characters":[]}',
+      );
+      return;
+    }
+    if (joined.contains('人物关系图谱编辑')) {
+      yield const ContentDelta(
+        '{"relations":[{"from":"莫烬","to":"罗娜","relationType":"盟友","label":"托付群星之城","strength":4,"line":"暗线","firstChapter":1,"lastChapter":6}]}',
+      );
+      return;
+    }
+    if (joined.contains('世界观编辑')) {
+      yield const ContentDelta(
+        '{"worldbuilding":[{"category":"地点","name":"群星之城","content":"庇护所","keywords":["群星之城"]}]}',
+      );
+      return;
+    }
+    if (joined.contains('伏笔审计')) {
+      yield const ContentDelta(
+        '{"threads":[{"title":"银色怀表的真实来历","detail":"第1章埋下","status":"open","plantedChapter":1,"involvedCharacters":["莫烬"]},'
+        '{"title":"罗娜铃铛的秘密","detail":"权柄载体","status":"resolved","plantedChapter":1,"resolvedChapter":6,"involvedCharacters":["罗娜"],"payoffDetail":"第6章移交"}]}',
+      );
+      return;
+    }
+    if (joined.contains('剧情时间线编辑')) {
+      yield const ContentDelta(
+        '{"timeline":[{"phase":"开局","chapterRange":"第1-6章","chapterStart":1,"chapterEnd":6,"inWorldTime":"第1-6天","summary":"莫烬与罗娜探索怀表与铃铛","participants":["莫烬","罗娜"],"linkedClueTitles":["罗娜铃铛的秘密"],"importance":"major"}],"activeArcs":["探索银色怀表"]}',
+      );
+      return;
+    }
+    yield const ContentDelta(
+      '{"characters":[{"name":"莫烬","aliases":["末路灰烬"],"oneLine":"末日行商","role":"主角","camp":"独立","stance":"主角方","importance":"major","currentState":"在群星之城"},'
+      '{"name":"罗娜","aliases":["小黑猫"],"oneLine":"群星城主","role":"核心配角","camp":"群星之城","stance":"主角方","importance":"major","currentState":"化为小黑猫"}]}',
+    );
+  }
+
+  @override
+  Future<String> testConnection({CancelToken? cancelToken}) async => 'ok';
+
+  @override
+  Future<List<String>> fetchModelIds({CancelToken? cancelToken}) async =>
+      const [];
 }

@@ -56,6 +56,7 @@ class _SourceLibraryPageState extends ConsumerState<SourceLibraryPage> {
     var useBatchCopy = false;
     var mode = ScanMode.evidence;
     var batchSize = 3;
+    var concurrency = 3;
 
     final start = await showDialog<bool>(
       context: context,
@@ -127,6 +128,24 @@ class _SourceLibraryPageState extends ConsumerState<SourceLibraryPage> {
                       ),
                     ],
                   ),
+                  if (mode != ScanMode.evidence) ...[
+                    const SizedBox(height: 12),
+                    DropdownButtonFormField<int>(
+                      initialValue: concurrency,
+                      decoration: const InputDecoration(
+                        labelText: '并发扫描通道数（提速用）',
+                      ),
+                      items: const [
+                        DropdownMenuItem(value: 1, child: Text('1 路串行（最稳）')),
+                        DropdownMenuItem(value: 2, child: Text('2 路并发')),
+                        DropdownMenuItem(value: 3, child: Text('3 路并发（推荐）')),
+                        DropdownMenuItem(value: 4, child: Text('4 路并发（极速）')),
+                      ],
+                      onChanged: (v) {
+                        if (v != null) setLocal(() => concurrency = v);
+                      },
+                    ),
+                  ],
                 ],
               ],
             ),
@@ -171,6 +190,7 @@ class _SourceLibraryPageState extends ConsumerState<SourceLibraryPage> {
         title: title,
         mode: mode,
         batchSize: batchSize,
+        concurrency: concurrency,
         isContinuation: false,
         initialProvider: provider,
       );

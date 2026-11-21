@@ -30,6 +30,7 @@ class SourceScanProgressDialog extends ConsumerStatefulWidget {
     required this.title,
     required this.mode,
     required this.batchSize,
+    this.concurrency = 3,
     required this.isContinuation,
     required this.initialProvider,
     this.presetProfileId,
@@ -39,6 +40,7 @@ class SourceScanProgressDialog extends ConsumerStatefulWidget {
   final String title;
   final ScanMode mode;
   final int batchSize;
+  final int concurrency;
   final bool isContinuation;
   final ProviderRecord initialProvider;
   final String? presetProfileId;
@@ -49,6 +51,7 @@ class SourceScanProgressDialog extends ConsumerStatefulWidget {
     required String title,
     required ScanMode mode,
     int batchSize = 3,
+    int concurrency = 3,
     bool isContinuation = false,
     required ProviderRecord initialProvider,
     String? presetProfileId,
@@ -61,6 +64,7 @@ class SourceScanProgressDialog extends ConsumerStatefulWidget {
         title: title,
         mode: mode,
         batchSize: batchSize,
+        concurrency: concurrency,
         isContinuation: isContinuation,
         initialProvider: initialProvider,
         presetProfileId: presetProfileId,
@@ -110,6 +114,7 @@ class _SourceScanProgressDialogState
         title: widget.title,
         mode: widget.mode,
         batchSize: widget.batchSize,
+        concurrency: widget.concurrency,
         isContinuation: widget.isContinuation,
         presetProfileId: _activeProfileId,
       );
@@ -677,6 +682,7 @@ class _ContinuationImportDialogState
   bool _useBatchCopy = false;
   ScanMode _mode = ScanMode.evidence;
   int _batchSize = 3;
+  int _concurrency = 3;
   bool _loadingFile = false;
 
   Future<void> _pickFile() async {
@@ -815,6 +821,7 @@ class _ContinuationImportDialogState
         title: title,
         mode: _mode,
         batchSize: _batchSize,
+        concurrency: _concurrency,
         isContinuation: true,
         initialProvider: provider,
       );
@@ -936,6 +943,33 @@ class _ContinuationImportDialogState
                           ),
                         ],
                       ),
+                      if (_mode != ScanMode.evidence) ...[
+                        const SizedBox(height: 12),
+                        DropdownButtonFormField<int>(
+                          initialValue: _concurrency,
+                          decoration: const InputDecoration(
+                            labelText: '并发扫描通道数（提速用）',
+                          ),
+                          items: const [
+                            DropdownMenuItem(
+                              value: 1,
+                              child: Text('1 路串行（最稳）'),
+                            ),
+                            DropdownMenuItem(value: 2, child: Text('2 路并发')),
+                            DropdownMenuItem(
+                              value: 3,
+                              child: Text('3 路并发（推荐）'),
+                            ),
+                            DropdownMenuItem(
+                              value: 4,
+                              child: Text('4 路并发（极速）'),
+                            ),
+                          ],
+                          onChanged: (v) {
+                            if (v != null) setState(() => _concurrency = v);
+                          },
+                        ),
+                      ],
                     ],
                   ],
                 ),

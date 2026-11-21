@@ -490,6 +490,15 @@ class AppDatabase extends _$AppDatabase {
     return rows.map((e) => e.summaryText).toList();
   }
 
+  Future<Map<int, String>> loadScanReduceMap(String profileId) async {
+    final rows =
+        await (select(scanReduces)
+              ..where((t) => t.profileId.equals(profileId))
+              ..orderBy([(t) => OrderingTerm.asc(t.seq)]))
+            .get();
+    return {for (final r in rows) r.seq: r.summaryText};
+  }
+
   Future<int> getMaxReduceSeq(String profileId) async {
     final rows =
         await (select(scanReduces)

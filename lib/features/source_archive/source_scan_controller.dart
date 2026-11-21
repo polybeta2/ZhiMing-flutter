@@ -16,24 +16,13 @@ import '../../core/storage/blob_store.dart';
 import '../../domain/models/source_profile_models.dart';
 import '../../domain/source/novel_local_indexer.dart';
 import '../../domain/source/source_batch_helper.dart';
+import '../../domain/source/source_graph_aggregator.dart';
+import '../../domain/source/source_graph_reducer.dart';
 import '../../domain/source/source_micro_summarizer.dart';
-import '../../domain/source/source_reduce_watermark.dart';
 import '../../domain/source/source_reducer.dart';
 import '../../domain/source/source_scan_chunker.dart';
 
 enum ScanPhase { idle, mapping, reducing, paused, done, failed }
-
-class _PendingMicro {
-  const _PendingMicro(this.pos, this.micro);
-  final int pos;
-  final MicroSummary micro;
-}
-
-class _RetryReduceBatch {
-  const _RetryReduceBatch(this.seq, this.items);
-  final int seq;
-  final List<_PendingMicro> items;
-}
 
 class _FetchResult {
   const _FetchResult({
@@ -81,9 +70,8 @@ class SourceScanController extends ChangeNotifier {
   bool _cancelled = false;
   CancelToken? _activeCancel;
   int _runGeneration = 0;
+  int _activeStreams = 0;
   final List<double> _mapTimes = [];
-
-  static const int _reduceBatchSize = 40;
 
   void updateProvider(ProviderRecord nextProvider, LLMClient nextClient) {
     provider = nextProvider;
@@ -107,6 +95,7 @@ class SourceScanController extends ChangeNotifier {
     required String title,
     required ScanMode mode,
     int batchSize = 3,
+    int concurrency = 3,
     bool isContinuation = false,
     String? presetProfileId,
   }) async {
@@ -120,6 +109,7 @@ class SourceScanController extends ChangeNotifier {
     final generation = ++_runGeneration;
     final pid = presetProfileId ?? const Uuid().v4();
     final clampedBatch = batchSize.clamp(1, 10);
+    final clampedConcurrency = concurrency.clamp(1, 4);
 
     try {
       await WakelockPlus.enable();
@@ -182,88 +172,22 @@ class SourceScanController extends ChangeNotifier {
       doneChunks = doneIndexes.length;
       tokensIn = inTotal;
       tokensOut = outTotal;
-      statusDetail = '正在逐批分析并滚动归并（${mode.label} · 每批 $clampedBatch 块）';
+      statusDetail =
+          '步骤 1/5：并发抽取逐章事实（${mode.label} · 每批 $clampedBatch 块 · $clampedConcurrency 并发）';
       notifyListeners();
 
-      // 恢复滚动归并状态
-      final reducedUpto = await db.getReducedUpto(pid);
-      final reducePending = <_PendingMicro>[];
-      for (final row in doneChunkRows) {
-        if (row.idx > reducedUpto && row.payloadJson != null) {
-          try {
-            reducePending.add(
-              _PendingMicro(
-                row.idx,
-                MicroSummary.fromJsonString(row.payloadJson!),
-              ),
-            );
-          } catch (_) {}
-        }
-      }
-      final reduceRetries = <_RetryReduceBatch>[];
-      final reduceFutures = <Future<void>>[];
-      var nextReduceSeq = (await db.getMaxReduceSeq(pid)) + 1;
-      final watermark = SourceReduceWatermark(
-        nextSeq: nextReduceSeq,
-        watermark: reducedUpto,
+      // 推理模型安全预算：防止 reasoning_tokens 吃干 maxTokens 导致空正文
+      const mapConfig = GenerationConfig(temperature: 0.2, maxTokens: 12288);
+      const reduceConfig = GenerationConfig(temperature: 0.2, maxTokens: 12288);
+      const heavyReduceConfig = GenerationConfig(
+        temperature: 0.25,
+        maxTokens: 16384,
       );
 
-      // 推理模型安全预算：防止 reasoning_tokens 吃干 maxTokens 导致空正文（实测 P0 修复）
-      const mapConfig = GenerationConfig(temperature: 0.2, maxTokens: 12288);
-      const reduceConfig = GenerationConfig(temperature: 0.25, maxTokens: 12288);
-      const finalConfig = GenerationConfig(temperature: 0.3, maxTokens: 16384);
-
-      void spawnReduce() {
-        int seq;
-        List<_PendingMicro> batch;
-        if (reduceRetries.isNotEmpty) {
-          final retry = reduceRetries.removeAt(0);
-          seq = retry.seq;
-          batch = retry.items;
-        } else {
-          if (reducePending.isEmpty) return;
-          seq = nextReduceSeq++;
-          batch = List<_PendingMicro>.from(reducePending);
-          reducePending.clear();
-        }
-        final hiPos = batch.map((e) => e.pos).reduce((a, b) => a > b ? a : b);
-        reduceFutures.add(() async {
-          final prompt = SourceReducer.batchPrompt(
-            batch.map((e) => e.micro).toList(),
-            batchChars: 12000,
-          );
-          final res = await _fetchWithRetry(
-            [LLMMessage(role: LLMRole.user, content: prompt)],
-            config: reduceConfig,
-          );
-          if (_cancelled || generation != _runGeneration) return;
-          if (!res.drained || res.reply.trim().isEmpty) {
-            reduceRetries.add(_RetryReduceBatch(seq, batch));
-            return;
-          }
-          await db.saveScanReduce(pid, seq, res.reply.trim());
-          final adv = watermark.complete(seq: seq, hiPos: hiPos);
-          if (adv != null) {
-            await db.advanceReducedUpto(pid, adv);
-          }
-          if (res.usage != null) {
-            inTotal += res.usage!.promptTokens;
-            outTotal += res.usage!.completionTokens;
-            cachedTokens += res.usage!.cachedTokens;
-          } else {
-            inTotal += prompt.length ~/ 2;
-            outTotal += res.reply.length ~/ 2;
-          }
-          tokensIn = inTotal;
-          tokensOut = outTotal;
-          notifyListeners();
-        }());
-      }
-
-      // ---- 1. Map 阶段（连续未完成块成组） ----
+      // ---- 1. 并发 Map 阶段（真实章号锚定 + 固定 worker 池） ----
+      final pendingGroups = <List<({int pos, SourceScanChunk chunk})>>[];
       var pos = 0;
       while (pos < chunks.length) {
-        if (_cancelled || generation != _runGeneration) break;
         if (doneIndexes.contains(pos)) {
           pos += 1;
           continue;
@@ -275,184 +199,552 @@ class SourceScanController extends ChangeNotifier {
           group.add((pos: g, chunk: chunks[g]));
           g += 1;
         }
-        if (group.isEmpty) {
-          pos += 1;
-          continue;
-        }
-
-        final t0 = DateTime.now();
-        final groupSummary = <int, MicroSummary>{};
-        UsageReport? usage;
-
-        if (group.length == 1) {
-          final single = group.first;
-          final msgs = SourceMicroSummarizer.messages(chunk: single.chunk.text);
-          final parsed = await _fetchSingleParsed(msgs, config: mapConfig);
-          if (_cancelled) break;
-          if (parsed.summary == null) {
-            _fail(parsed.error ?? '网络错误');
-            return;
-          }
-          groupSummary[single.pos] = parsed.summary!;
-          usage = parsed.usage;
-        } else {
-          final batchInputs = group
-              .map(
-                (item) => BatchChapterInput(
-                  index: item.pos + 1,
-                  body: item.chunk.text,
-                ),
-              )
-              .toList();
-          final prompt = SourceBatchHelper.prompt(
-            title: title,
-            chapters: batchInputs,
-          );
-          final parsed = await _fetchBatchParsed(
-            [LLMMessage(role: LLMRole.user, content: prompt)],
-            config: mapConfig,
-          );
-          if (_cancelled) break;
-          if (parsed.summaries == null) {
-            _fail(parsed.error ?? '批量微摘要解析失败');
-            return;
-          }
-          groupSummary.addAll(parsed.summaries!);
-          usage = parsed.usage;
-        }
-
-        final elapsedSec =
-            DateTime.now().difference(t0).inMilliseconds / 1000.0;
-        _mapTimes.add(elapsedSec / group.length);
-
-        if (usage != null) {
-          inTotal += usage.promptTokens;
-          outTotal += usage.completionTokens;
-          cachedTokens += usage.cachedTokens;
-        }
-
-        for (final item in group) {
-          if (_cancelled) break;
-          final micro = groupSummary[item.pos] ?? const MicroSummary();
-          final payload = micro.toJsonString();
-          if (usage == null) {
-            inTotal += item.chunk.text.length ~/ 2;
-            outTotal += payload.length ~/ 2;
-          }
-          await db.markScanChunk(
-            ScanChunksCompanion.insert(
-              profileId: pid,
-              idx: item.pos,
-              status: 'done',
-              payloadJson: Value(payload),
-              tokensIn: Value(inTotal),
-              tokensOut: Value(outTotal),
-              updatedAt: DateTime.now(),
-            ),
-          );
-          doneIndexes.add(item.pos);
-          reducePending.add(_PendingMicro(item.pos, micro));
-          doneChunks = doneIndexes.length;
-          tokensIn = inTotal;
-          tokensOut = outTotal;
-        }
-
-        _updateEstimate();
-        notifyListeners();
-
-        if (reducePending.length >= _reduceBatchSize) {
-          spawnReduce();
+        if (group.isNotEmpty) {
+          pendingGroups.add(group);
         }
         pos = g;
       }
 
-      if (_cancelled || generation != _runGeneration) {
-        return;
-      }
+      var nextGroupIdx = 0;
+      String? mapFatalError;
 
-      // ---- 2. 收尾滚动归并 ----
-      phase = ScanPhase.reducing;
-      statusDetail = '正在收尾滚动归并阶段摘要…';
-      notifyListeners();
+      Future<void> mapWorker() async {
+        while (true) {
+          if (_cancelled ||
+              generation != _runGeneration ||
+              mapFatalError != null) {
+            return;
+          }
+          if (nextGroupIdx >= pendingGroups.length) return;
+          final group = pendingGroups[nextGroupIdx++];
 
-      var rounds = 0;
-      while (rounds < 3) {
-        while (reduceRetries.isNotEmpty || reducePending.isNotEmpty) {
-          spawnReduce();
-        }
-        if (reduceFutures.isNotEmpty) {
-          await Future.wait(List<Future<void>>.from(reduceFutures));
-          reduceFutures.clear();
-        }
-        if (_cancelled) return;
-        if (reduceRetries.isEmpty) break;
-        rounds += 1;
-      }
+          final t0 = DateTime.now();
+          final groupSummary = <int, MicroSummary>{};
+          UsageReport? usage;
 
-      if (reduceRetries.isNotEmpty) {
-        _fail('部分归并批次多次失败（阶段摘要不完整），请检查网络后点「继续分析」续跑');
-        return;
-      }
-
-      final stageSummaries = await db.loadScanReduces(pid);
-      if (_cancelled) return;
-
-      // ---- 3. 终归并 / 续写深度归并 ----
-      final analyzedChapters =
-          chunks.map((c) => c.chapterIndex).reduce((a, b) => a > b ? a : b) + 1;
-      statusDetail = isContinuation
-          ? '正在深度归并人物现状、未回收伏笔与剧情弧…'
-          : '正在终归并全书人物、时间线与世界观…';
-      notifyListeners();
-
-      final finalMsgs = isContinuation
-          ? SourceReducer.continuationPrompt(
-              stageSummaries: stageSummaries,
-              upToChapter: analyzedChapters,
-            )
-          : SourceReducer.finalPrompt(stageSummaries: stageSummaries);
-
-      final finalRes = await _fetchWithRetry(finalMsgs, config: finalConfig);
-      if (_cancelled) return;
-      if (!finalRes.drained) {
-        _fail(finalRes.errorText ?? '终归并网络失败');
-        return;
-      }
-      if (finalRes.usage != null) {
-        inTotal += finalRes.usage!.promptTokens;
-        outTotal += finalRes.usage!.completionTokens;
-        cachedTokens += finalRes.usage!.cachedTokens;
-      } else {
-        outTotal += finalRes.reply.length ~/ 2;
-      }
-
-      SourceNovelProfileData profile;
-      try {
-        profile = isContinuation
-            ? SourceReducer.parseContinuation(
-                finalRes.reply,
-                fallbackTitle: title,
-                upToChapter: analyzedChapters,
-                profileId: pid,
-              )
-            : SourceReducer.parseFinal(
-                finalRes.reply,
-                fallbackTitle: title,
-                profileId: pid,
+          if (group.length == 1) {
+            final single = group.first;
+            final marker = single.chunk.partCount > 1
+                ? '${single.chunk.chapterTitle.isNotEmpty ? single.chunk.chapterTitle : "第${single.chunk.chapterNo}章"}（第${single.chunk.partIndex + 1}/${single.chunk.partCount}段，chapter=${single.chunk.chapterNo}）'
+                : (single.chunk.chapterTitle.isNotEmpty
+                      ? '${single.chunk.chapterTitle}（chapter=${single.chunk.chapterNo}）'
+                      : '第${single.chunk.chapterNo}章');
+            final msgs = SourceMicroSummarizer.messages(
+              chunk: single.chunk.text,
+              chapterMarker: marker,
+            );
+            final parsed = await _fetchSingleParsed(msgs, config: mapConfig);
+            if (_cancelled || generation != _runGeneration) return;
+            if (parsed.summary == null) {
+              mapFatalError ??= parsed.error ?? '网络错误';
+              return;
+            }
+            groupSummary[single.pos] = MicroSummary(
+              chapterNo: single.chunk.chapterNo,
+              characters: parsed.summary!.characters,
+              relations: parsed.summary!.relations,
+              events: parsed.summary!.events,
+              worldbuilding: parsed.summary!.worldbuilding,
+              foreshadowing: parsed.summary!.foreshadowing,
+            );
+            usage = parsed.usage;
+          } else {
+            final batchInputs = group.map((item) {
+              final ch = item.chunk;
+              final rawTitle = ch.chapterTitle.isNotEmpty
+                  ? ch.chapterTitle
+                  : '第${ch.chapterNo}章';
+              final titled = ch.partCount > 1
+                  ? '$rawTitle（第${ch.partIndex + 1}/${ch.partCount}段）'
+                  : rawTitle;
+              return BatchChapterInput(
+                index: ch.chapterNo,
+                title: titled,
+                body: ch.text,
               );
-      } catch (_) {
-        _fail(
-          isContinuation
-              ? '深度归并产物解析失败，可稍后点「继续分析」重试（阶段摘要已缓存）'
-              : '终归并产物解析失败，可稍后点「继续分析」重试（阶段摘要已缓存）',
-        );
+            }).toList();
+            final prompt = SourceBatchHelper.prompt(
+              title: title,
+              chapters: batchInputs,
+            );
+            final parsed = await _fetchBatchEntriesParsed(
+              [LLMMessage(role: LLMRole.user, content: prompt)],
+              config: mapConfig,
+            );
+            if (_cancelled || generation != _runGeneration) return;
+            if (parsed.entries == null) {
+              mapFatalError ??= parsed.error ?? '批量微摘要解析失败';
+              return;
+            }
+            // 按真实 chapterNo 分配（同章多段依次对应，避免重复或错位）
+            final byCh = <int, List<MicroSummary>>{};
+            for (final entry in parsed.entries!) {
+              byCh.putIfAbsent(entry.chapterNo, () => []).add(entry.summary);
+            }
+            for (final item in group) {
+              final list = byCh[item.chunk.chapterNo];
+              if (list != null && list.isNotEmpty) {
+                final m = list.removeAt(0);
+                groupSummary[item.pos] = MicroSummary(
+                  chapterNo: item.chunk.chapterNo,
+                  characters: m.characters,
+                  relations: m.relations,
+                  events: m.events,
+                  worldbuilding: m.worldbuilding,
+                  foreshadowing: m.foreshadowing,
+                );
+              } else {
+                groupSummary[item.pos] = MicroSummary(
+                  chapterNo: item.chunk.chapterNo,
+                );
+              }
+            }
+            // 若还有未消费的同章额外条目，合并到本组同章首块
+            for (final rem in byCh.entries) {
+              if (rem.value.isEmpty) continue;
+              final target = group
+                  .where((g) => g.chunk.chapterNo == rem.key)
+                  .firstOrNull;
+              if (target == null) continue;
+              var acc =
+                  groupSummary[target.pos] ??
+                  MicroSummary(chapterNo: rem.key);
+              for (final extra in rem.value) {
+                acc = acc.mergeWith(extra);
+              }
+              groupSummary[target.pos] = acc;
+            }
+            usage = parsed.usage;
+          }
+
+          if (_cancelled || generation != _runGeneration) return;
+
+          final elapsedSec =
+              DateTime.now().difference(t0).inMilliseconds / 1000.0;
+          _mapTimes.add(elapsedSec / group.length);
+
+          if (usage != null) {
+            inTotal += usage.promptTokens;
+            outTotal += usage.completionTokens;
+            cachedTokens += usage.cachedTokens;
+          }
+
+          for (final item in group) {
+            if (_cancelled || generation != _runGeneration) return;
+            final micro =
+                groupSummary[item.pos] ??
+                MicroSummary(chapterNo: item.chunk.chapterNo);
+            final payload = micro.toJsonString();
+            if (usage == null) {
+              inTotal += item.chunk.text.length ~/ 2;
+              outTotal += payload.length ~/ 2;
+            }
+            await db.markScanChunk(
+              ScanChunksCompanion.insert(
+                profileId: pid,
+                idx: item.pos,
+                status: 'done',
+                payloadJson: Value(payload),
+                tokensIn: Value(inTotal),
+                tokensOut: Value(outTotal),
+                updatedAt: DateTime.now(),
+              ),
+            );
+            doneIndexes.add(item.pos);
+            doneChunks = doneIndexes.length;
+            tokensIn = inTotal;
+            tokensOut = outTotal;
+          }
+
+          _updateEstimate(concurrency: clampedConcurrency);
+          notifyListeners();
+        }
+      }
+
+      if (pendingGroups.isNotEmpty) {
+        final workerCount = clampedConcurrency < pendingGroups.length
+            ? clampedConcurrency
+            : pendingGroups.length;
+        await Future.wait(List.generate(workerCount, (_) => mapWorker()));
+      }
+
+      if (_cancelled || generation != _runGeneration) return;
+      if (mapFatalError != null) {
+        _fail(mapFatalError!);
         return;
+      }
+
+      // ---- 2. 本地零损程序化聚合（0 Token，彻底消除 12000 字截断与 1500 字漏斗） ----
+      phase = ScanPhase.reducing;
+      statusDetail = '正在零损聚合全书人物、关系、事件与伏笔证据池…';
+      notifyListeners();
+
+      final allDoneRows = await db.getDoneScanChunks(pid);
+      final analyzedChapters = chunks
+          .map((c) => c.chapterNo)
+          .reduce((a, b) => a > b ? a : b);
+      final microRecords = <({int chapterNo, MicroSummary summary})>[];
+      for (final row in allDoneRows) {
+        if (row.payloadJson == null || row.idx < 0 || row.idx >= chunks.length) {
+          continue;
+        }
+        try {
+          final m = MicroSummary.fromJsonString(row.payloadJson!);
+          final realCh = chunks[row.idx].chapterNo;
+          microRecords.add((chapterNo: realCh, summary: m));
+        } catch (_) {}
+      }
+
+      final aggregated = SourceGraphAggregator.build(
+        microRecords,
+        totalChapters: analyzedChapters,
+      );
+      final savedReduces = await db.loadScanReduceMap(pid);
+
+      void recordUsage(UsageReport? u, int estInChars, int estOutChars) {
+        if (u != null) {
+          inTotal += u.promptTokens;
+          outTotal += u.completionTokens;
+          cachedTokens += u.cachedTokens;
+        } else {
+          inTotal += estInChars ~/ 2;
+          outTotal += estOutChars ~/ 2;
+        }
+        tokensIn = inTotal;
+        tokensOut = outTotal;
+        notifyListeners();
+      }
+
+      // ---- 3. Pass 1: Canon 实体消歧与阵营名录 ----
+      statusDetail =
+          '步骤 2/5：实体消歧与别名统一（共汇总 ${aggregated.characterCandidates.length} 个候选角色、${aggregated.rawClues.length} 条伏笔线索）…';
+      notifyListeners();
+
+      CanonPassResult canon;
+      final cachedPass1 = savedReduces[GraphReduceSeq.pass1Canon];
+      if (cachedPass1 != null && cachedPass1.trim().isNotEmpty) {
+        try {
+          canon = SourceGraphReducer.parsePass1Canon(cachedPass1);
+        } catch (_) {
+          canon = await _runPass1Canon(
+            pid: pid,
+            title: title,
+            aggregated: aggregated,
+            config: heavyReduceConfig,
+            recordUsage: recordUsage,
+          );
+        }
+      } else {
+        canon = await _runPass1Canon(
+          pid: pid,
+          title: title,
+          aggregated: aggregated,
+          config: heavyReduceConfig,
+          recordUsage: recordUsage,
+        );
+      }
+      if (_cancelled || generation != _runGeneration) return;
+
+      // 代码确定性重写全书所有角色名
+      final normalized = aggregated.applyAliasMap(
+        canon.aliasMap,
+        dropNames: canon.dropNames,
+      );
+      final targets = SourceGraphReducer.selectProfileTargets(canon, normalized);
+      final targetNames = targets.map((t) => t.name).toSet();
+
+      // 并行计算本地原话声音样本（零 Token）
+      final indexerFuture = _indexInIsolate(sourceText);
+
+      // ---- 4. Pass 2: 角色分批建档（10-12人/批，最多 2 并发） ----
+      final charBatches = <List<CanonSkeleton>>[];
+      for (var i = 0; i < targets.length; i += SourceGraphReducer.charBatchSize) {
+        final end = (i + SourceGraphReducer.charBatchSize).clamp(0, targets.length);
+        charBatches.add(targets.sublist(i, end));
+      }
+
+      final tailSnippet = isContinuation
+          ? chunks
+                .sublist((chunks.length - 3).clamp(0, chunks.length))
+                .map((c) => '〔第${c.chapterNo}章 ${c.chapterTitle}〕\n${c.text}')
+                .join('\n\n')
+          : null;
+
+      statusDetail =
+          '步骤 3/5：分批深度建档 ${targets.length} 名核心与重要角色（共 ${charBatches.length} 批）…';
+      notifyListeners();
+
+      final profiledMap = <String, CanonCharacter>{};
+      var nextCharBatch = 0;
+      String? pass2Error;
+
+      Future<void> charBatchWorker() async {
+        while (true) {
+          if (_cancelled || generation != _runGeneration || pass2Error != null) {
+            return;
+          }
+          if (nextCharBatch >= charBatches.length) return;
+          final bIdx = nextCharBatch++;
+          final batch = charBatches[bIdx];
+          final seq = GraphReduceSeq.pass2CharBase + bIdx;
+          final cached = savedReduces[seq];
+          List<CanonCharacter>? chars;
+          if (cached != null && cached.trim().isNotEmpty) {
+            try {
+              chars = SourceGraphReducer.parsePass2CharBatch(cached);
+            } catch (_) {}
+          }
+          if (chars == null) {
+            final msgs = SourceGraphReducer.pass2CharBatchPrompt(
+              title: title,
+              batch: batch,
+              normalized: normalized,
+              isContinuation: isContinuation,
+              tailContextSnippet: tailSnippet,
+            );
+            final res = await _fetchWithRetry(msgs, config: heavyReduceConfig);
+            if (_cancelled || generation != _runGeneration) return;
+            if (!res.drained) {
+              pass2Error ??= res.errorText ?? '角色建档第 ${bIdx + 1} 批请求失败';
+              return;
+            }
+            recordUsage(res.usage, msgs.last.content.length, res.reply.length);
+            try {
+              chars = SourceGraphReducer.parsePass2CharBatch(res.reply);
+              await db.saveScanReduce(pid, seq, res.reply.trim());
+            } catch (e) {
+              pass2Error ??= '角色建档第 ${bIdx + 1} 批解析失败：$e';
+              return;
+            }
+          }
+          for (final c in chars) {
+            profiledMap[c.name] = c;
+          }
+        }
+      }
+
+      if (charBatches.isNotEmpty) {
+        final workers = charBatches.length >= 2 ? 2 : 1;
+        await Future.wait(List.generate(workers, (_) => charBatchWorker()));
+      }
+      if (_cancelled || generation != _runGeneration) return;
+      if (pass2Error != null) {
+        _fail(pass2Error!);
+        return;
+      }
+
+      // ---- 5. Pass 3A（关系图谱）& Pass 3B（世界观）并发归并 ----
+      statusDetail = '步骤 4/5：归并结构化人物关系图谱与世界观词条…';
+      notifyListeners();
+
+      final relPairs = SourceGraphReducer.selectRelationPairs(
+        normalized,
+        allowedNames: targetNames,
+      );
+      final relBatches = <List<MapEntry<String, List<RawRelationEvidence>>>>[];
+      for (var i = 0; i < relPairs.length; i += SourceGraphReducer.relPairBatchSize) {
+        final end = (i + SourceGraphReducer.relPairBatchSize).clamp(0, relPairs.length);
+        relBatches.add(relPairs.sublist(i, end));
+      }
+
+      final relations = <CanonRelationEdge>[];
+      final worldbuilding = <CanonWorldEntry>[];
+
+      await Future.wait([
+        () async {
+          for (var i = 0; i < relBatches.length; i++) {
+            if (_cancelled || generation != _runGeneration) return;
+            final seq = GraphReduceSeq.pass3RelBase + i;
+            final cached = savedReduces[seq];
+            if (cached != null && cached.trim().isNotEmpty) {
+              try {
+                relations.addAll(SourceGraphReducer.parsePass3Relations(cached));
+                continue;
+              } catch (_) {}
+            }
+            final msgs = SourceGraphReducer.pass3RelationsPrompt(
+              title: title,
+              pairBatch: relBatches[i],
+              cooccurrence: normalized.cooccurrence,
+            );
+            final res = await _fetchWithRetry(msgs, config: reduceConfig);
+            if (_cancelled || generation != _runGeneration) return;
+            if (res.drained && res.reply.trim().isNotEmpty) {
+              recordUsage(res.usage, msgs.last.content.length, res.reply.length);
+              try {
+                final parsedRels = SourceGraphReducer.parsePass3Relations(
+                  res.reply,
+                );
+                relations.addAll(parsedRels);
+                await db.saveScanReduce(pid, seq, res.reply.trim());
+              } catch (_) {}
+            }
+          }
+        }(),
+        () async {
+          if (normalized.rawWorldEntries.isEmpty) return;
+          final cached = savedReduces[GraphReduceSeq.pass3World];
+          if (cached != null && cached.trim().isNotEmpty) {
+            try {
+              worldbuilding.addAll(SourceGraphReducer.parsePass3World(cached));
+              return;
+            } catch (_) {}
+          }
+          final msgs = SourceGraphReducer.pass3WorldPrompt(
+            normalized,
+            title: title,
+          );
+          final res = await _fetchWithRetry(msgs, config: reduceConfig);
+          if (_cancelled || generation != _runGeneration) return;
+          if (res.drained && res.reply.trim().isNotEmpty) {
+            recordUsage(res.usage, msgs.last.content.length, res.reply.length);
+            try {
+              worldbuilding.addAll(SourceGraphReducer.parsePass3World(res.reply));
+              await db.saveScanReduce(
+                pid,
+                GraphReduceSeq.pass3World,
+                res.reply.trim(),
+              );
+            } catch (_) {}
+          }
+        }(),
+      ]);
+      if (_cancelled || generation != _runGeneration) return;
+
+      // ---- 6. Pass 4A（伏笔生命周期对账）→ Pass 4B（时间线里程碑与主线） ----
+      statusDetail = '步骤 5/5：对账全书伏笔埋收周期与剧情时间线里程碑…';
+      notifyListeners();
+
+      final threads = <CanonThread>[];
+      if (normalized.rawClues.isNotEmpty) {
+        final cached = savedReduces[GraphReduceSeq.pass4Clues];
+        var loaded = false;
+        if (cached != null && cached.trim().isNotEmpty) {
+          try {
+            threads.addAll(SourceGraphReducer.parsePass4Clues(cached));
+            loaded = true;
+          } catch (_) {}
+        }
+        if (!loaded) {
+          final msgs = SourceGraphReducer.pass4CluesPrompt(
+            normalized,
+            title: title,
+            isContinuation: isContinuation,
+          );
+          final res = await _fetchWithRetry(msgs, config: heavyReduceConfig);
+          if (_cancelled || generation != _runGeneration) return;
+          if (res.drained && res.reply.trim().isNotEmpty) {
+            recordUsage(res.usage, msgs.last.content.length, res.reply.length);
+            try {
+              threads.addAll(SourceGraphReducer.parsePass4Clues(res.reply));
+              await db.saveScanReduce(
+                pid,
+                GraphReduceSeq.pass4Clues,
+                res.reply.trim(),
+              );
+            } catch (_) {}
+          }
+        }
+      }
+
+      var timelineResult = const TimelinePassResult(
+        timeline: [],
+        activeArcs: [],
+      );
+      if (normalized.rawEvents.isNotEmpty) {
+        final cached = savedReduces[GraphReduceSeq.pass4Timeline];
+        var loaded = false;
+        if (cached != null && cached.trim().isNotEmpty) {
+          try {
+            timelineResult = SourceGraphReducer.parsePass4Timeline(cached);
+            loaded = true;
+          } catch (_) {}
+        }
+        if (!loaded) {
+          final msgs = SourceGraphReducer.pass4TimelinePrompt(
+            normalized,
+            title: title,
+            reconciledThreads: threads,
+            isContinuation: isContinuation,
+          );
+          final res = await _fetchWithRetry(msgs, config: heavyReduceConfig);
+          if (_cancelled || generation != _runGeneration) return;
+          if (res.drained && res.reply.trim().isNotEmpty) {
+            recordUsage(res.usage, msgs.last.content.length, res.reply.length);
+            try {
+              timelineResult = SourceGraphReducer.parsePass4Timeline(res.reply);
+              await db.saveScanReduce(
+                pid,
+                GraphReduceSeq.pass4Timeline,
+                res.reply.trim(),
+              );
+            } catch (_) {}
+          }
+        }
+      }
+
+      // ---- 7. 组装统一档案并补全声音样本与双向关系兼容字段 ----
+      final indexer = await indexerFuture;
+      final localVoiceMap = {
+        for (final e in indexer.topEntities)
+          if (e.voiceSamples.isNotEmpty) e.name: e.voiceSamples,
+      };
+      final relsByChar = <String, List<CanonRelationship>>{};
+      for (final edge in relations) {
+        relsByChar
+            .putIfAbsent(edge.from, () => [])
+            .add(CanonRelationship(target: edge.to, relation: edge.label));
+        relsByChar
+            .putIfAbsent(edge.to, () => [])
+            .add(CanonRelationship(target: edge.from, relation: edge.label));
+      }
+
+      final finalCharacters = <CanonCharacter>[];
+      for (final sk in targets) {
+        final base =
+            profiledMap[sk.name] ??
+            CanonCharacter(
+              name: sk.name,
+              aliases: sk.aliases,
+              role: sk.role,
+              camp: sk.camp,
+              stance: sk.stance,
+              importance: sk.importance,
+            );
+        final mergedAliases = {...base.aliases, ...sk.aliases}..remove(base.name);
+        final samples = base.voiceSamples.isNotEmpty
+            ? base.voiceSamples
+            : (localVoiceMap[base.name] ?? const <String>[]);
+        final relList = base.relationships.isNotEmpty
+            ? base.relationships
+            : (relsByChar[base.name] ?? const <CanonRelationship>[]);
+        finalCharacters.add(
+          base.copyWith(
+            aliases: mergedAliases.toList(),
+            role: base.role ?? sk.role,
+            camp: base.camp ?? sk.camp,
+            stance: base.stance ?? sk.stance,
+            importance: sk.importance,
+            voiceSamples: samples,
+            relationships: relList,
+          ),
+        );
       }
 
       // 始终保存原文到 BlobStore，便于写作助手 zm-search 随时按需查书
-      await blobs.saveText(BlobKinds.continuation, profile.id, sourceText);
+      await blobs.saveText(BlobKinds.continuation, pid, sourceText);
 
-      profile = profile.copyWith(
+      final profile = SourceNovelProfileData(
+        id: pid,
+        title: title,
+        camps: canon.camps,
+        characters: finalCharacters,
+        relations: relations,
+        timeline: timelineResult.timeline,
+        worldbuilding: worldbuilding,
+        openThreads: threads,
+        activeArcs: timelineResult.activeArcs,
+        continuationFromChapter: isContinuation ? analyzedChapters : null,
         hasSourceText: true,
         meta: ScanMeta(
           totalChapters: analyzedChapters,
@@ -485,7 +777,8 @@ class SourceScanController extends ChangeNotifier {
       tokensIn = inTotal;
       tokensOut = outTotal;
       phase = ScanPhase.done;
-      statusDetail = '分析完成！档案已入库';
+      statusDetail =
+          '建图完成！${finalCharacters.length} 角色 · ${relations.length} 关系 · ${threads.length} 伏笔 · ${timelineResult.timeline.length} 时间线';
       estimatedRemainingSeconds = 0;
       notifyListeners();
     } catch (e) {
@@ -499,6 +792,24 @@ class SourceScanController extends ChangeNotifier {
       } catch (_) {}
       await BackgroundKeepAliveService.instance.release();
     }
+  }
+
+  Future<CanonPassResult> _runPass1Canon({
+    required String pid,
+    required String title,
+    required AggregatedSourceGraph aggregated,
+    required GenerationConfig config,
+    required void Function(UsageReport?, int, int) recordUsage,
+  }) async {
+    final msgs = SourceGraphReducer.pass1CanonPrompt(aggregated, title: title);
+    final res = await _fetchWithRetry(msgs, config: config);
+    if (!res.drained) {
+      throw Exception(res.errorText ?? 'Pass 1 实体消歧请求失败');
+    }
+    recordUsage(res.usage, msgs.last.content.length, res.reply.length);
+    final canon = SourceGraphReducer.parsePass1Canon(res.reply);
+    await db.saveScanReduce(pid, GraphReduceSeq.pass1Canon, res.reply.trim());
+    return canon;
   }
 
   /// 极速证据建档（Search-First + KV Prefix Cache）：
@@ -778,18 +1089,22 @@ class SourceScanController extends ChangeNotifier {
     notifyListeners();
   }
 
-  void _updateEstimate() {
+  void _updateEstimate({int concurrency = 1}) {
     if (_mapTimes.isEmpty) return;
     final avg = _mapTimes.reduce((a, b) => a + b) / _mapTimes.length;
     final remaining = (totalChunks - doneChunks).clamp(0, totalChunks);
-    estimatedRemainingSeconds = (avg * remaining).round();
+    final divisor = concurrency.clamp(1, 4);
+    estimatedRemainingSeconds = (avg * remaining / divisor).round();
   }
 
   Future<_FetchResult> _fetch(
     List<LLMMessage> messages, {
     required GenerationConfig config,
   }) async {
-    progress.begin();
+    _activeStreams += 1;
+    if (_activeStreams == 1) {
+      progress.begin();
+    }
     final buf = StringBuffer();
     UsageReport? usage;
     try {
@@ -815,15 +1130,18 @@ class SourceScanController extends ChangeNotifier {
             usage = ev;
         }
       }
-      progress.finish();
       return _FetchResult(reply: buf.toString(), drained: true, usage: usage);
     } catch (e) {
-      progress.finish();
       return _FetchResult(
         reply: buf.toString(),
         drained: false,
         errorText: e.toString(),
       );
+    } finally {
+      _activeStreams = (_activeStreams - 1).clamp(0, 999);
+      if (_activeStreams == 0) {
+        progress.finish();
+      }
     }
   }
 
@@ -855,20 +1173,26 @@ class SourceScanController extends ChangeNotifier {
     return (summary: null, error: lastError, usage: null);
   }
 
-  Future<({Map<int, MicroSummary>? summaries, String? error, UsageReport? usage})>
-  _fetchBatchParsed(
+  Future<
+    ({
+      List<({int chapterNo, MicroSummary summary})>? entries,
+      String? error,
+      UsageReport? usage,
+    })
+  >
+  _fetchBatchEntriesParsed(
     List<LLMMessage> messages, {
     required GenerationConfig config,
     int attempts = 3,
   }) async {
     String? lastError;
     for (var i = 0; i < attempts; i++) {
-      if (_cancelled) return (summaries: null, error: null, usage: null);
+      if (_cancelled) return (entries: null, error: null, usage: null);
       final res = await _fetch(messages, config: config);
       if (res.drained) {
         try {
           return (
-            summaries: SourceBatchHelper.parseBatchOutput(res.reply),
+            entries: SourceBatchHelper.parseBatchEntries(res.reply),
             error: null,
             usage: res.usage,
           );
@@ -880,7 +1204,7 @@ class SourceScanController extends ChangeNotifier {
       }
       await _backoff(i);
     }
-    return (summaries: null, error: lastError, usage: null);
+    return (entries: null, error: lastError, usage: null);
   }
 
   Future<_FetchResult> _fetchWithRetry(

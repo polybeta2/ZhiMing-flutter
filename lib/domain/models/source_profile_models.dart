@@ -513,7 +513,7 @@ class CanonEvent {
     chapterStart: _optInt(json['chapterStart'] ?? json['chapter_start']),
     chapterEnd: _optInt(json['chapterEnd'] ?? json['chapter_end']),
     inWorldTime: _optString(json['inWorldTime'] ?? json['in_world_time']),
-    summary: json['summary']?.toString() ?? '',
+    summary: (json['summary'] ?? json['event'])?.toString() ?? '',
     participants: _stringList(json['participants']),
     linkedClueTitles: _stringList(
       json['linkedClueTitles'] ?? json['linked_clue_titles'],
