@@ -178,8 +178,20 @@ class _ChapterEditorWidgetState extends ConsumerState<ChapterEditorWidget> {
     _textCtrl.dispose();
     _searchCtrl.dispose();
     _replaceCtrl.dispose();
-    WakelockPlus.disable();
+    unawaited(_disableWakelockSafely());
     super.dispose();
+  }
+
+  Future<void> _enableWakelockSafely() async {
+    try {
+      await WakelockPlus.enable();
+    } catch (_) {}
+  }
+
+  Future<void> _disableWakelockSafely() async {
+    try {
+      await WakelockPlus.disable();
+    } catch (_) {}
   }
 
   Future<void> _loadChapter(String chapterId) async {
@@ -251,7 +263,7 @@ class _ChapterEditorWidgetState extends ConsumerState<ChapterEditorWidget> {
   void _resetDraft() {
     _draftCancel?.cancel();
     _draftProgress.finish();
-    WakelockPlus.disable();
+    unawaited(_disableWakelockSafely());
     setState(() {
       _streaming = false;
       _draft = '';
@@ -623,7 +635,7 @@ class _ChapterEditorWidgetState extends ConsumerState<ChapterEditorWidget> {
       _aiError = null;
     });
     _draftProgress.begin();
-    await WakelockPlus.enable();
+    await _enableWakelockSafely();
 
     final buf = StringBuffer();
     var lastFlush = DateTime.fromMillisecondsSinceEpoch(0);
@@ -655,7 +667,7 @@ class _ChapterEditorWidgetState extends ConsumerState<ChapterEditorWidget> {
       if (mounted) setState(() => _aiError = '$e');
     } finally {
       _draftProgress.finish();
-      await WakelockPlus.disable();
+      await _disableWakelockSafely();
       if (mounted) setState(() => _streaming = false);
     }
   }

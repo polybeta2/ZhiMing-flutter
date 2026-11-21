@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:dio/dio.dart';
@@ -57,8 +58,20 @@ class _AutoWriteSheetState extends ConsumerState<AutoWriteSheet> {
   void dispose() {
     _cancel?.cancel();
     _progress.dispose();
-    WakelockPlus.disable();
+    unawaited(_disableWakelockSafely());
     super.dispose();
+  }
+
+  Future<void> _enableWakelockSafely() async {
+    try {
+      await WakelockPlus.enable();
+    } catch (_) {}
+  }
+
+  Future<void> _disableWakelockSafely() async {
+    try {
+      await WakelockPlus.disable();
+    } catch (_) {}
   }
 
   Future<void> _start() async {
@@ -112,7 +125,7 @@ class _AutoWriteSheetState extends ConsumerState<AutoWriteSheet> {
       _completed.clear();
     });
     _cancel = CancelToken();
-    await WakelockPlus.enable();
+    await _enableWakelockSafely();
 
     final lib = ref.read(promptLibraryProvider);
     final config = GenerationConfig(
@@ -341,7 +354,7 @@ class _AutoWriteSheetState extends ConsumerState<AutoWriteSheet> {
       if (mounted) setState(() => _error = '执行出错：$e（已完成章节均已保存）');
     } finally {
       _progress.finish();
-      await WakelockPlus.disable();
+      await _disableWakelockSafely();
       if (mounted) setState(() => _running = false);
     }
   }

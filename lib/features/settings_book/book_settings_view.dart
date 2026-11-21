@@ -291,144 +291,31 @@ class _CharacterListPane extends ConsumerWidget {
     WidgetRef ref, [
     Character? existing,
   ]) async {
-    final nameCtrl = TextEditingController(text: existing?.name ?? '');
-    final aliasesCtrl = TextEditingController(
-      text: decodeStringList(existing?.aliasesJson).join('、'),
-    );
-    final appCtrl = TextEditingController(text: existing?.appearance ?? '');
-    final perCtrl = TextEditingController(text: existing?.personality ?? '');
-    final bgCtrl = TextEditingController(text: existing?.background ?? '');
-    final goalCtrl = TextEditingController(text: existing?.currentGoal ?? '');
-    final locCtrl = TextEditingController(
-      text: existing?.currentLocation ?? '',
-    );
-    final physCtrl = TextEditingController(text: existing?.physicalState ?? '');
-    final mentCtrl = TextEditingController(text: existing?.mentalState ?? '');
-    var relevant = existing?.isSceneRelevant ?? true;
-
-    final saved = await showDialog<bool>(
+    final result = await showDialog<_CharacterDraft>(
       context: context,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setModal) => AlertDialog(
-          title: Text(existing == null ? '新增角色卡' : '编辑角色卡'),
-          content: SizedBox(
-            width: 520,
-            child: SingleChildScrollView(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  TextField(
-                    controller: nameCtrl,
-                    decoration: const InputDecoration(labelText: '姓名 *'),
-                  ),
-                  const SizedBox(height: 10),
-                  TextField(
-                    controller: aliasesCtrl,
-                    decoration: const InputDecoration(
-                      labelText: '别名（顿号或逗号分隔）',
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  TextField(
-                    controller: perCtrl,
-                    minLines: 2,
-                    maxLines: 4,
-                    decoration: const InputDecoration(labelText: '性格'),
-                  ),
-                  const SizedBox(height: 10),
-                  TextField(
-                    controller: appCtrl,
-                    minLines: 2,
-                    maxLines: 4,
-                    decoration: const InputDecoration(labelText: '外貌'),
-                  ),
-                  const SizedBox(height: 10),
-                  TextField(
-                    controller: bgCtrl,
-                    minLines: 2,
-                    maxLines: 5,
-                    decoration: const InputDecoration(labelText: '背景经历'),
-                  ),
-                  const Divider(height: 24),
-                  TextField(
-                    controller: goalCtrl,
-                    decoration: const InputDecoration(labelText: '当前目标'),
-                  ),
-                  const SizedBox(height: 10),
-                  TextField(
-                    controller: locCtrl,
-                    decoration: const InputDecoration(labelText: '当前位置'),
-                  ),
-                  const SizedBox(height: 10),
-                  TextField(
-                    controller: physCtrl,
-                    decoration: const InputDecoration(labelText: '身体状态'),
-                  ),
-                  const SizedBox(height: 10),
-                  TextField(
-                    controller: mentCtrl,
-                    decoration: const InputDecoration(labelText: '心理状态'),
-                  ),
-                  SwitchListTile(
-                    contentPadding: EdgeInsets.zero,
-                    title: const Text('参与近期剧情（续写优先注入）'),
-                    value: relevant,
-                    onChanged: (v) => setModal(() => relevant = v),
-                  ),
-                ],
-              ),
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(ctx).pop(false),
-              child: const Text('取消'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.of(ctx).pop(true),
-              child: const Text('保存'),
-            ),
-          ],
-        ),
-      ),
+      builder: (_) => _EditCharacterDialog(existing: existing),
     );
-
-    if (saved == true && nameCtrl.text.trim().isNotEmpty) {
-      final aliases = aliasesCtrl.text
-          .split(RegExp(r'[,，、;；\s]+'))
-          .where((s) => s.trim().isNotEmpty)
-          .toList();
-      await ref
-          .read(appDatabaseProvider)
-          .upsertCharacter(
-            CharactersCompanion.insert(
-              id: existing?.id ?? const Uuid().v4(),
-              novelId: novelId,
-              name: nameCtrl.text.trim(),
-              aliasesJson: Value(encodeStringList(aliases)),
-              appearance: Value(_opt(appCtrl.text)),
-              personality: Value(_opt(perCtrl.text)),
-              background: Value(_opt(bgCtrl.text)),
-              currentGoal: Value(_opt(goalCtrl.text)),
-              currentLocation: Value(_opt(locCtrl.text)),
-              physicalState: Value(_opt(physCtrl.text)),
-              mentalState: Value(_opt(mentCtrl.text)),
-              isSceneRelevant: Value(relevant),
-              sortOrder: Value(existing?.sortOrder ?? 0),
-            ),
-          );
-      await ref.read(novelRepositoryProvider).touchNovel(novelId);
-    }
-
-    nameCtrl.dispose();
-    aliasesCtrl.dispose();
-    appCtrl.dispose();
-    perCtrl.dispose();
-    bgCtrl.dispose();
-    goalCtrl.dispose();
-    locCtrl.dispose();
-    physCtrl.dispose();
-    mentCtrl.dispose();
+    if (result == null) return;
+    await ref
+        .read(appDatabaseProvider)
+        .upsertCharacter(
+          CharactersCompanion.insert(
+            id: existing?.id ?? const Uuid().v4(),
+            novelId: novelId,
+            name: result.name,
+            aliasesJson: Value(encodeStringList(result.aliases)),
+            appearance: Value(_opt(result.appearance)),
+            personality: Value(_opt(result.personality)),
+            background: Value(_opt(result.background)),
+            currentGoal: Value(_opt(result.goal)),
+            currentLocation: Value(_opt(result.location)),
+            physicalState: Value(_opt(result.physicalState)),
+            mentalState: Value(_opt(result.mentalState)),
+            isSceneRelevant: Value(result.relevant),
+            sortOrder: Value(existing?.sortOrder ?? 0),
+          ),
+        );
+    await ref.read(novelRepositoryProvider).touchNovel(novelId);
   }
 
   static String? _opt(String s) => s.trim().isEmpty ? null : s.trim();
@@ -544,115 +431,26 @@ class _WorldListPaneState extends ConsumerState<_WorldListPane> {
   String _selectedCategory = '全部';
 
   Future<void> _editEntry([WorldEntry? existing]) async {
-    final nameCtrl = TextEditingController(text: existing?.name ?? '');
-    final keywordsCtrl = TextEditingController(
-      text: decodeStringList(existing?.keywordsJson).join('、'),
-    );
-    final contentCtrl = TextEditingController(text: existing?.content ?? '');
-    var category = existing?.category ?? WorldCategories.all.first;
-    var isAlwaysOn = existing?.isAlwaysOn ?? false;
-
-    final saved = await showDialog<bool>(
+    final result = await showDialog<_WorldEntryDraft>(
       context: context,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setModal) => AlertDialog(
-          title: Text(existing == null ? '新增世界观条目' : '编辑世界观条目'),
-          content: SizedBox(
-            width: 500,
-            child: SingleChildScrollView(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  DropdownButtonFormField<String>(
-                    initialValue: WorldCategories.all.contains(category)
-                        ? category
-                        : '其他',
-                    decoration: const InputDecoration(labelText: '分类'),
-                    items: [
-                      for (final c in WorldCategories.all)
-                        DropdownMenuItem(value: c, child: Text(c)),
-                    ],
-                    onChanged: (v) => setModal(
-                      () => category = v ?? WorldCategories.all.first,
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  TextField(
-                    controller: nameCtrl,
-                    decoration: const InputDecoration(labelText: '条目名称 *'),
-                  ),
-                  const SizedBox(height: 10),
-                  TextField(
-                    controller: keywordsCtrl,
-                    decoration: const InputDecoration(
-                      labelText: '触发关键词（顿号或逗号分隔，命中即自动注入）',
-                      hintText: '例如：诡异副本、收容物、禁区',
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  TextField(
-                    controller: contentCtrl,
-                    minLines: 4,
-                    maxLines: 8,
-                    decoration: const InputDecoration(
-                      labelText: '设定说明',
-                      alignLabelWithHint: true,
-                    ),
-                  ),
-                  const SizedBox(height: 6),
-                  SwitchListTile(
-                    contentPadding: EdgeInsets.zero,
-                    title: const Text('常驻注入（每章续写自动携带）'),
-                    subtitle: const Text(
-                      '关闭时仅在细纲/上下文提及条目名或关键词时按需激活',
-                      style: TextStyle(fontSize: 12),
-                    ),
-                    value: isAlwaysOn,
-                    onChanged: (v) => setModal(() => isAlwaysOn = v),
-                  ),
-                ],
-              ),
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(ctx).pop(false),
-              child: const Text('取消'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.of(ctx).pop(true),
-              child: const Text('保存'),
-            ),
-          ],
-        ),
-      ),
+      builder: (_) => _EditWorldEntryDialog(existing: existing),
     );
-
-    if (saved == true && nameCtrl.text.trim().isNotEmpty) {
-      final keywords = keywordsCtrl.text
-          .split(RegExp(r'[,，、;；\s]+'))
-          .where((s) => s.trim().isNotEmpty)
-          .toList();
-      await ref
-          .read(appDatabaseProvider)
-          .upsertWorldEntry(
-            WorldEntriesCompanion.insert(
-              id: existing?.id ?? const Uuid().v4(),
-              novelId: widget.novelId,
-              category: category,
-              name: nameCtrl.text.trim(),
-              content: Value(contentCtrl.text.trim()),
-              keywordsJson: Value(encodeStringList(keywords)),
-              isAlwaysOn: Value(isAlwaysOn),
-              sortOrder: Value(existing?.sortOrder ?? 0),
-            ),
-          );
-      await ref.read(novelRepositoryProvider).touchNovel(widget.novelId);
-    }
-
-    nameCtrl.dispose();
-    keywordsCtrl.dispose();
-    contentCtrl.dispose();
+    if (result == null) return;
+    await ref
+        .read(appDatabaseProvider)
+        .upsertWorldEntry(
+          WorldEntriesCompanion.insert(
+            id: existing?.id ?? const Uuid().v4(),
+            novelId: widget.novelId,
+            category: result.category,
+            name: result.name,
+            content: Value(result.content),
+            keywordsJson: Value(encodeStringList(result.keywords)),
+            isAlwaysOn: Value(result.isAlwaysOn),
+            sortOrder: Value(existing?.sortOrder ?? 0),
+          ),
+        );
+    await ref.read(novelRepositoryProvider).touchNovel(widget.novelId);
   }
 
   @override
@@ -807,6 +605,332 @@ class _WorldListPaneState extends ConsumerState<_WorldListPane> {
           ),
         ],
       ),
+    );
+  }
+}
+
+class _CharacterDraft {
+  const _CharacterDraft({
+    required this.name,
+    required this.aliases,
+    required this.appearance,
+    required this.personality,
+    required this.background,
+    required this.goal,
+    required this.location,
+    required this.physicalState,
+    required this.mentalState,
+    required this.relevant,
+  });
+
+  final String name;
+  final List<String> aliases;
+  final String appearance;
+  final String personality;
+  final String background;
+  final String goal;
+  final String location;
+  final String physicalState;
+  final String mentalState;
+  final bool relevant;
+}
+
+class _EditCharacterDialog extends StatefulWidget {
+  const _EditCharacterDialog({this.existing});
+  final Character? existing;
+
+  @override
+  State<_EditCharacterDialog> createState() => _EditCharacterDialogState();
+}
+
+class _EditCharacterDialogState extends State<_EditCharacterDialog> {
+  late final TextEditingController _nameCtrl;
+  late final TextEditingController _aliasesCtrl;
+  late final TextEditingController _appCtrl;
+  late final TextEditingController _perCtrl;
+  late final TextEditingController _bgCtrl;
+  late final TextEditingController _goalCtrl;
+  late final TextEditingController _locCtrl;
+  late final TextEditingController _physCtrl;
+  late final TextEditingController _mentCtrl;
+  late bool _relevant;
+
+  @override
+  void initState() {
+    super.initState();
+    final e = widget.existing;
+    _nameCtrl = TextEditingController(text: e?.name ?? '');
+    _aliasesCtrl = TextEditingController(
+      text: decodeStringList(e?.aliasesJson).join('、'),
+    );
+    _appCtrl = TextEditingController(text: e?.appearance ?? '');
+    _perCtrl = TextEditingController(text: e?.personality ?? '');
+    _bgCtrl = TextEditingController(text: e?.background ?? '');
+    _goalCtrl = TextEditingController(text: e?.currentGoal ?? '');
+    _locCtrl = TextEditingController(text: e?.currentLocation ?? '');
+    _physCtrl = TextEditingController(text: e?.physicalState ?? '');
+    _mentCtrl = TextEditingController(text: e?.mentalState ?? '');
+    _relevant = e?.isSceneRelevant ?? true;
+  }
+
+  @override
+  void dispose() {
+    _nameCtrl.dispose();
+    _aliasesCtrl.dispose();
+    _appCtrl.dispose();
+    _perCtrl.dispose();
+    _bgCtrl.dispose();
+    _goalCtrl.dispose();
+    _locCtrl.dispose();
+    _physCtrl.dispose();
+    _mentCtrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Text(widget.existing == null ? '新增角色卡' : '编辑角色卡'),
+      content: SizedBox(
+        width: 520,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: _nameCtrl,
+                decoration: const InputDecoration(labelText: '姓名 *'),
+              ),
+              const SizedBox(height: 10),
+              TextField(
+                controller: _aliasesCtrl,
+                decoration: const InputDecoration(labelText: '别名（顿号或逗号分隔）'),
+              ),
+              const SizedBox(height: 10),
+              TextField(
+                controller: _perCtrl,
+                minLines: 2,
+                maxLines: 4,
+                decoration: const InputDecoration(labelText: '性格'),
+              ),
+              const SizedBox(height: 10),
+              TextField(
+                controller: _appCtrl,
+                minLines: 2,
+                maxLines: 4,
+                decoration: const InputDecoration(labelText: '外貌'),
+              ),
+              const SizedBox(height: 10),
+              TextField(
+                controller: _bgCtrl,
+                minLines: 2,
+                maxLines: 5,
+                decoration: const InputDecoration(labelText: '背景经历'),
+              ),
+              const Divider(height: 24),
+              TextField(
+                controller: _goalCtrl,
+                decoration: const InputDecoration(labelText: '当前目标'),
+              ),
+              const SizedBox(height: 10),
+              TextField(
+                controller: _locCtrl,
+                decoration: const InputDecoration(labelText: '当前位置'),
+              ),
+              const SizedBox(height: 10),
+              TextField(
+                controller: _physCtrl,
+                decoration: const InputDecoration(labelText: '身体状态'),
+              ),
+              const SizedBox(height: 10),
+              TextField(
+                controller: _mentCtrl,
+                decoration: const InputDecoration(labelText: '心理状态'),
+              ),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('参与近期剧情（续写优先注入）'),
+                value: _relevant,
+                onChanged: (v) => setState(() => _relevant = v),
+              ),
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('取消'),
+        ),
+        FilledButton(
+          onPressed: () {
+            final name = _nameCtrl.text.trim();
+            if (name.isEmpty) return;
+            final aliases = _aliasesCtrl.text
+                .split(RegExp(r'[,，、;；\s]+'))
+                .where((s) => s.trim().isNotEmpty)
+                .toList();
+            Navigator.of(context).pop(
+              _CharacterDraft(
+                name: name,
+                aliases: aliases,
+                appearance: _appCtrl.text,
+                personality: _perCtrl.text,
+                background: _bgCtrl.text,
+                goal: _goalCtrl.text,
+                location: _locCtrl.text,
+                physicalState: _physCtrl.text,
+                mentalState: _mentCtrl.text,
+                relevant: _relevant,
+              ),
+            );
+          },
+          child: const Text('保存'),
+        ),
+      ],
+    );
+  }
+}
+
+class _WorldEntryDraft {
+  const _WorldEntryDraft({
+    required this.category,
+    required this.name,
+    required this.keywords,
+    required this.content,
+    required this.isAlwaysOn,
+  });
+
+  final String category;
+  final String name;
+  final List<String> keywords;
+  final String content;
+  final bool isAlwaysOn;
+}
+
+class _EditWorldEntryDialog extends StatefulWidget {
+  const _EditWorldEntryDialog({this.existing});
+  final WorldEntry? existing;
+
+  @override
+  State<_EditWorldEntryDialog> createState() => _EditWorldEntryDialogState();
+}
+
+class _EditWorldEntryDialogState extends State<_EditWorldEntryDialog> {
+  late final TextEditingController _nameCtrl;
+  late final TextEditingController _keywordsCtrl;
+  late final TextEditingController _contentCtrl;
+  late String _category;
+  late bool _isAlwaysOn;
+
+  @override
+  void initState() {
+    super.initState();
+    final e = widget.existing;
+    _nameCtrl = TextEditingController(text: e?.name ?? '');
+    _keywordsCtrl = TextEditingController(
+      text: decodeStringList(e?.keywordsJson).join('、'),
+    );
+    _contentCtrl = TextEditingController(text: e?.content ?? '');
+    _category = e?.category ?? WorldCategories.all.first;
+    _isAlwaysOn = e?.isAlwaysOn ?? false;
+  }
+
+  @override
+  void dispose() {
+    _nameCtrl.dispose();
+    _keywordsCtrl.dispose();
+    _contentCtrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Text(widget.existing == null ? '新增世界观条目' : '编辑世界观条目'),
+      content: SizedBox(
+        width: 500,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              DropdownButtonFormField<String>(
+                initialValue: WorldCategories.all.contains(_category)
+                    ? _category
+                    : '其他',
+                decoration: const InputDecoration(labelText: '分类'),
+                items: [
+                  for (final c in WorldCategories.all)
+                    DropdownMenuItem(value: c, child: Text(c)),
+                ],
+                onChanged: (v) => setState(
+                  () => _category = v ?? WorldCategories.all.first,
+                ),
+              ),
+              const SizedBox(height: 10),
+              TextField(
+                controller: _nameCtrl,
+                decoration: const InputDecoration(labelText: '条目名称 *'),
+              ),
+              const SizedBox(height: 10),
+              TextField(
+                controller: _keywordsCtrl,
+                decoration: const InputDecoration(
+                  labelText: '触发关键词（顿号或逗号分隔，命中即自动注入）',
+                  hintText: '例如：诡异副本、收容物、禁区',
+                ),
+              ),
+              const SizedBox(height: 10),
+              TextField(
+                controller: _contentCtrl,
+                minLines: 4,
+                maxLines: 8,
+                decoration: const InputDecoration(
+                  labelText: '设定说明',
+                  alignLabelWithHint: true,
+                ),
+              ),
+              const SizedBox(height: 6),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('常驻注入（每章续写自动携带）'),
+                subtitle: const Text(
+                  '关闭时仅在细纲/上下文提及条目名或关键词时按需激活',
+                  style: TextStyle(fontSize: 12),
+                ),
+                value: _isAlwaysOn,
+                onChanged: (v) => setState(() => _isAlwaysOn = v),
+              ),
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('取消'),
+        ),
+        FilledButton(
+          onPressed: () {
+            final name = _nameCtrl.text.trim();
+            if (name.isEmpty) return;
+            final keywords = _keywordsCtrl.text
+                .split(RegExp(r'[,，、;；\s]+'))
+                .where((s) => s.trim().isNotEmpty)
+                .toList();
+            Navigator.of(context).pop(
+              _WorldEntryDraft(
+                category: _category,
+                name: name,
+                keywords: keywords,
+                content: _contentCtrl.text.trim(),
+                isAlwaysOn: _isAlwaysOn,
+              ),
+            );
+          },
+          child: const Text('保存'),
+        ),
+      ],
     );
   }
 }
