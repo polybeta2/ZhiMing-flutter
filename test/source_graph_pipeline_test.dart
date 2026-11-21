@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:zhiming/domain/models/source_profile_models.dart';
 import 'package:zhiming/domain/source/novel_local_indexer.dart';
 import 'package:zhiming/domain/source/source_batch_helper.dart';
+import 'package:zhiming/domain/source/source_graph_aggregator.dart';
 import 'package:zhiming/domain/source/source_micro_summarizer.dart';
 import 'package:zhiming/domain/source/source_scan_chunker.dart';
 
@@ -196,6 +197,106 @@ void main() {
       expect(names, isNot(contains('莫烬继续')));
       expect(names, isNot(contains('转过头来')));
       expect(names, isNot(contains('开口')));
+    });
+  });
+
+  group('SourceGraphAggregator', () {
+    test('aggregates all chapters losslessly and rewrites names via aliasMap', () {
+      final records = <({int chapterNo, MicroSummary summary})>[
+        (
+          chapterNo: 1,
+          summary: const MicroSummary(
+            chapterNo: 1,
+            characters: [
+              MicroCharacter(name: '莫烬', aliases: ['末路灰烬'], traits: '冷静'),
+              MicroCharacter(name: '罗娜', traits: '群星城主', campHint: '群星之城'),
+            ],
+            relations: [
+              MicroRelation(
+                from: '莫烬',
+                to: '罗娜',
+                relation: '初识',
+                kind: '盟友',
+                line: '明线',
+              ),
+            ],
+            events: [
+              MicroEvent(
+                summary: '莫烬遇见罗娜',
+                inWorldTime: '第1天',
+                participants: ['莫烬', '罗娜'],
+                importance: 'major',
+              ),
+            ],
+            foreshadowing: [
+              MicroForeshadow(
+                summary: '罗娜的铃铛来源不明',
+                planted: true,
+                characters: ['罗娜'],
+              ),
+            ],
+          ),
+        ),
+        (
+          chapterNo: 248,
+          summary: const MicroSummary(
+            chapterNo: 248,
+            characters: [
+              MicroCharacter(name: '小黑猫', stateChange: '昏迷被帕梅拉带走'),
+              MicroCharacter(name: '路人甲', traits: '背景板'),
+            ],
+            relations: [
+              MicroRelation(
+                from: '末路灰烬',
+                to: '小黑猫',
+                relation: '托付群星之城',
+                kind: '盟友',
+                line: '暗线',
+              ),
+            ],
+            events: [
+              MicroEvent(
+                summary: '小黑猫交出铃铛',
+                participants: ['小黑猫', '末路灰烬'],
+                importance: 'major',
+              ),
+            ],
+            foreshadowing: [
+              MicroForeshadow(
+                summary: '铃铛是城主权柄核心',
+                planted: false,
+                characters: ['小黑猫'],
+                targetHint: '罗娜的铃铛来源不明',
+              ),
+            ],
+          ),
+        ),
+      ];
+
+      final raw = SourceGraphAggregator.build(records, totalChapters: 250);
+      expect(raw.rawEvents.length, 2);
+      expect(raw.rawEvents[0].chapterNo, 1);
+      expect(raw.rawEvents[1].chapterNo, 248);
+      expect(raw.rawClues.length, 2);
+
+      final normalized = raw.applyAliasMap(
+        const {'莫烬': '莫烬', '末路灰烬': '莫烬', '罗娜': '罗娜', '小黑猫': '罗娜'},
+        dropNames: const {'路人甲'},
+      );
+      expect(normalized.characterCandidates.containsKey('路人甲'), isFalse);
+      expect(normalized.characterCandidates['罗娜']!.chapterNos, {1, 248});
+      expect(
+        normalized.characterCandidates['罗娜']!.stateChanges.single.chapterNo,
+        248,
+      );
+      expect(normalized.rawEvents[1].participants, containsAll(['莫烬', '罗娜']));
+      expect(normalized.rawClues[1].characters, ['罗娜']);
+
+      final pairs = normalized.groupedRelationsByPair(
+        allowedNames: {'莫烬', '罗娜'},
+      );
+      expect(pairs.length, 1);
+      expect(pairs.values.single.length, 2);
     });
   });
 }
