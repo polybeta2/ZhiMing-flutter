@@ -8,7 +8,7 @@ import '../../core/prompts/prompt_limits.dart';
 import '../../core/theme/design_tokens.dart';
 import '../../core/widgets/zm_widgets.dart';
 
-/// 开发者工坊：24 套内置系统提示词覆写 + 3 类示例标签库维护
+/// 开发者工坊：全套内置系统提示词覆写 + 3 类示例标签库维护
 class DeveloperToolsPage extends ConsumerWidget {
   const DeveloperToolsPage({super.key});
 
@@ -19,10 +19,10 @@ class DeveloperToolsPage extends ConsumerWidget {
       child: Scaffold(
         appBar: AppBar(
           title: const Text('开发者工坊'),
-          bottom: const TabBar(
+          bottom: TabBar(
             tabs: [
-              Tab(text: '系统提示词（24）'),
-              Tab(text: '示例标签库'),
+              Tab(text: '系统提示词（${PromptDefaults.builtInPrompts.length}）'),
+              const Tab(text: '示例标签库'),
             ],
           ),
         ),

@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../core/llm/provider_client_factory.dart';
+import '../../core/prompts/prompt_defaults.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/theme/design_tokens.dart';
 import '../../core/widgets/zm_widgets.dart';
@@ -16,7 +17,7 @@ class SettingsPage extends ConsumerWidget {
       context,
       title: '进入开发者工坊？',
       message:
-          '此处可修改全部 24 套内置系统提示词与示例标签库，保存后立即全局生效。\n'
+          '此处可修改全部 ${PromptDefaults.builtInPrompts.length} 套内置系统提示词与示例标签库，保存后立即全局生效。\n'
           '若非熟悉提示词工程，误改可能导致蓝图 JSON 解析失败或成文质量下降（随时可一键恢复出厂默认）。',
       confirmLabel: '确认进入',
     );

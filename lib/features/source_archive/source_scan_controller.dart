@@ -140,10 +140,8 @@ class SourceScanController extends ChangeNotifier {
       statusDetail = '正在后台切章与净化正文…';
       notifyListeners();
 
-      // 原文大文本在 Isolate 中切块，避免 UI 掉帧
-      final chunks = await Isolate.run(
-        () => SourceScanChunker.chunks(sourceText, mode: mode),
-      );
+      // 原文大文本在 Isolate 中切块，避免 UI 掉帧（静态方法避免捕获 this/CancelToken）
+      final chunks = await _chunkInIsolate(sourceText, mode);
       if (chunks.isEmpty) {
         phase = ScanPhase.failed;
         errorMessage = '原文内容为空，无法分析';
@@ -518,9 +516,7 @@ class SourceScanController extends ChangeNotifier {
     statusDetail = '步骤 1/3：本地零耗时索引全书实体、共现关系与角色口癖…';
     notifyListeners();
 
-    final indexer = await Isolate.run(
-      () => NovelLocalIndexer.fromRawText(sourceText),
-    );
+    final indexer = await _indexInIsolate(sourceText);
     if (_cancelled || generation != _runGeneration) return;
     if (indexer.chapters.isEmpty) {
       _fail('原文内容为空，无法建档');
@@ -913,6 +909,14 @@ class SourceScanController extends ChangeNotifier {
       await Future<void>.delayed(const Duration(milliseconds: 200));
     }
   }
+
+  static Future<List<SourceScanChunk>> _chunkInIsolate(
+    String sourceText,
+    ScanMode mode,
+  ) => Isolate.run(() => SourceScanChunker.chunks(sourceText, mode: mode));
+
+  static Future<NovelLocalIndexer> _indexInIsolate(String sourceText) =>
+      Isolate.run(() => NovelLocalIndexer.fromRawText(sourceText));
 
   @override
   void dispose() {

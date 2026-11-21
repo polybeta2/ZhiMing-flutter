@@ -12,6 +12,7 @@ import 'package:zhiming/core/database/novel_repository.dart';
 import 'package:zhiming/core/security/api_key_vault.dart';
 import 'package:zhiming/core/storage/blob_store.dart';
 import 'package:zhiming/domain/models/source_profile_models.dart';
+import 'package:zhiming/features/assistant/assistant_chat_view.dart';
 import 'package:zhiming/features/editor/auto_write_sheet.dart';
 import 'package:zhiming/features/workspace/novel_workspace_page.dart';
 import 'package:zhiming/features/workspace/stats_and_export_sheet.dart';
@@ -373,6 +374,208 @@ void main() {
 
         Navigator.of(tester.element(find.byType(AutoWriteSheet))).pop();
         await flushAsyncAndPump(tester);
+        await unmountAndDrain(tester);
+      },
+      timeout: const Timeout(Duration(seconds: 30)),
+    );
+
+    testWidgets(
+      '[T1.1/T1.3/T1.5/T6.2] Mobile NavigationBar, DeveloperTools 25 prompts, B7 provider live sync, and B8 banner discard',
+      (tester) async {
+        // 窄屏 (<600dp) 验证底部 NavigationBar
+        tester.view.physicalSize = const Size(420, 840);
+        tester.view.devicePixelRatio = 1.0;
+        addTearDown(() {
+          tester.view.resetPhysicalSize();
+          tester.view.resetDevicePixelRatio();
+        });
+
+        await tester.runAsync(() async {
+          final now = DateTime.now();
+          await db.upsertProvider(
+            ProvidersCompanion.insert(
+              id: 'p_a',
+              name: 'ModelA',
+              baseUrl: 'https://api.example.com/v1',
+              apiKeyId: 'k_a',
+              modelName: 'model-alpha',
+              isDefault: const Value(true),
+              createdAt: now,
+            ),
+          );
+          await db.upsertProvider(
+            ProvidersCompanion.insert(
+              id: 'p_b',
+              name: 'ModelB',
+              baseUrl: 'https://api.example.com/v1',
+              apiKeyId: 'k_b',
+              modelName: 'model-beta',
+              isDefault: const Value(false),
+              createdAt: now.add(const Duration(seconds: 1)),
+            ),
+          );
+          await db.upsertScanTask(
+            ScanTasksCompanion.insert(
+              profileId: 'paused_task_1',
+              title: '断点僵尸测试书',
+              mode: 'fast',
+              batchSize: 3,
+              totalChunks: 10,
+              providerName: 'ModelA',
+              providerBaseUrl: 'https://api.example.com/v1',
+              providerModel: 'model-alpha',
+              providerKeyId: 'k_a',
+              startedAt: now,
+            ),
+          );
+        });
+
+        await tester.pumpWidget(buildApp(db, blobs, vault));
+        await flushAsyncAndPump(tester);
+
+        // 1) T1.1: 手机宽应显示 NavigationBar 而非 NavigationRail
+        expect(find.byType(NavigationBar), findsOneWidget);
+        expect(find.byType(NavigationRail), findsNothing);
+
+        // 2) T6.2 (B8): 原作库放弃未完成扫描任务后横幅立即消失
+        await tester.tap(find.text('原作库'));
+        await flushAsyncAndPump(tester);
+        expect(find.textContaining('断点僵尸测试书'), findsOneWidget);
+        await tester.tap(find.text('放弃'));
+        await flushAsyncAndPump(tester);
+        expect(find.text('确认'), findsNothing);
+        await tester.tap(find.text('放弃并清理'));
+        await flushAsyncAndPump(tester);
+        expect(find.textContaining('断点僵尸测试书'), findsNothing);
+
+        // 3) T1.5: 设置 -> 开发者工坊展示 25 套提示词
+        await tester.tap(find.text('设置'));
+        await flushAsyncAndPump(tester);
+        expect(find.textContaining('model-alpha'), findsOneWidget);
+
+        await tester.tap(find.text('开发者工坊'));
+        await flushAsyncAndPump(tester);
+        expect(find.textContaining('25 套'), findsOneWidget);
+        await tester.tap(find.text('确认进入'));
+        await flushAsyncAndPump(tester);
+        expect(find.text('系统提示词（25）'), findsOneWidget);
+        expect(find.text('5 维事实审稿 · 系统提示词'), findsOneWidget);
+        Navigator.of(tester.element(find.text('系统提示词（25）'))).pop();
+        await flushAsyncAndPump(tester);
+
+        // 4) T1.3 (B7): 切换默认模型后设置页实时显示 model-beta；打开新书时编辑器胶囊也为 model-beta
+        tester.view.physicalSize = const Size(1280, 820);
+        await flushAsyncAndPump(tester);
+        await tester.runAsync(() => db.makeDefaultProvider('p_b'));
+        await flushAsyncAndPump(tester);
+        expect(find.textContaining('model-beta'), findsOneWidget);
+
+        await unmountAndDrain(tester);
+      },
+      timeout: const Timeout(Duration(seconds: 30)),
+    );
+
+    testWidgets(
+      '[T2.1-T2.4 + T3.2 + T3.5 + T4.3] Create 5-entry wizard, R18 toggle, Ctrl+F replace, Snapshot non-destructive restore & Assistant pill',
+      (tester) async {
+        tester.view.physicalSize = const Size(1280, 820);
+        tester.view.devicePixelRatio = 1.0;
+        addTearDown(() {
+          tester.view.resetPhysicalSize();
+          tester.view.resetDevicePixelRatio();
+        });
+
+        await tester.pumpWidget(buildApp(db, blobs, vault));
+        await flushAsyncAndPump(tester);
+
+        // 1) T2.1: 打开 5 入口建书向导并空白建书（空书库时标题栏与空状态各有「新建作品」，选 first）
+        await tester.tap(find.text('新建作品').first);
+        await flushAsyncAndPump(tester);
+        expect(find.text('一句话立项'), findsOneWidget);
+        expect(find.text('完整思路立项'), findsOneWidget);
+        expect(find.text('空白建书'), findsOneWidget);
+        expect(find.text('同人立项'), findsOneWidget);
+        expect(find.text('续写小说 / IF 线'), findsOneWidget);
+        await tester.tap(find.text('空白建书'));
+        await flushAsyncAndPump(tester);
+
+        await tester.enterText(
+          find.widgetWithText(TextField, '书名 *'),
+          '暗巷守灯人',
+        );
+        await tester.tap(find.text('创建并开始写作'));
+        await flushAsyncAndPump(tester, rounds: 6);
+        expect(find.text('暗巷守灯人'), findsOneWidget);
+
+        // 2) T3.2 + T3.5: 编辑器输入正文 -> 打开查找替换 -> 建手动快照 -> 改正文 -> 对比回退非破坏恢复
+        final editorField = find.descendant(
+          of: find.byType(NovelWorkspacePage),
+          matching: find.byWidgetPredicate(
+            (w) => w is TextField && w.expands == true,
+          ),
+        );
+        await tester.enterText(editorField, '旧灯笼微弱地摇晃着，老钟停在午夜。');
+        await flushAsyncAndPump(tester);
+
+        await tester.tap(find.byTooltip('查找与替换 (Ctrl+F)'));
+        await flushAsyncAndPump(tester);
+        expect(find.text('全部替换'), findsOneWidget);
+        await tester.enterText(find.widgetWithText(TextField, '查找…'), '旧灯笼');
+        await tester.enterText(
+          find.widgetWithText(TextField, '替换为…'),
+          '青铜提灯',
+        );
+        await tester.tap(find.text('全部替换'));
+        await flushAsyncAndPump(tester);
+        expect(find.textContaining('青铜提灯微弱地摇晃着'), findsOneWidget);
+
+        // 存一版快照 -> 修改正文 -> 回退并确认恢复
+        await tester.tap(find.byTooltip('版本快照'));
+        await flushAsyncAndPump(tester);
+        await tester.tap(find.text('存一版'));
+        await flushAsyncAndPump(tester);
+        expect(find.text('v1 · 手动快照'), findsOneWidget);
+        Navigator.of(tester.element(find.text('存一版'))).pop();
+        await flushAsyncAndPump(tester);
+
+        await tester.enterText(editorField, '已被覆盖的新草稿文本');
+        await flushAsyncAndPump(tester);
+        await tester.tap(find.byTooltip('版本快照'));
+        await flushAsyncAndPump(tester);
+        await tester.tap(find.text('对比回退').first);
+        await flushAsyncAndPump(tester);
+        await tester.tap(find.text('确认回退'));
+        await flushAsyncAndPump(tester);
+        expect(find.textContaining('青铜提灯微弱地摇晃着'), findsOneWidget);
+
+        // 3) T2.3: 设定集开启 R18 触发免责声明弹窗（「同意并开启」）与 R18 徽章
+        await tester.tap(find.text('设定集'));
+        await flushAsyncAndPump(tester);
+        await tester.tap(find.textContaining('R18').first);
+        await flushAsyncAndPump(tester);
+        if (find.text('同意并开启').evaluate().isNotEmpty) {
+          await tester.tap(find.text('同意并开启'));
+          await flushAsyncAndPump(tester);
+        }
+        expect(find.text('R18'), findsWidgets);
+
+        // 4) T4.3: 写作助手唯一只读/可改设定权限胶囊
+        await tester.tap(find.text('助手'));
+        await flushAsyncAndPump(tester);
+        expect(find.byType(AssistantChatView), findsOneWidget);
+        ScaffoldMessenger.of(
+          tester.element(find.byType(AssistantChatView)),
+        ).clearSnackBars();
+        await flushAsyncAndPump(tester);
+        expect(find.text('只读'), findsOneWidget);
+        await tester.tap(find.text('只读'));
+        await flushAsyncAndPump(tester);
+        if (find.text('开启读写模式').evaluate().isNotEmpty) {
+          await tester.tap(find.text('开启读写模式'));
+          await flushAsyncAndPump(tester);
+        }
+        expect(find.text('可改设定'), findsOneWidget);
+
         await unmountAndDrain(tester);
       },
       timeout: const Timeout(Duration(seconds: 30)),

@@ -123,6 +123,7 @@ class _ChapterEditorWidgetState extends ConsumerState<ChapterEditorWidget> {
   final _textCtrl = TextEditingController();
   final _searchCtrl = TextEditingController();
   final _replaceCtrl = TextEditingController();
+  late final NovelRepository _repo;
 
   Chapter? _chapter;
   bool _loading = true;
@@ -152,6 +153,7 @@ class _ChapterEditorWidgetState extends ConsumerState<ChapterEditorWidget> {
   @override
   void initState() {
     super.initState();
+    _repo = ref.read(novelRepositoryProvider);
     _loadChapter(widget.chapterId);
     _textCtrl.addListener(_onTextOrSelectionChanged);
   }
@@ -219,13 +221,11 @@ class _ChapterEditorWidgetState extends ConsumerState<ChapterEditorWidget> {
       final chId = _chapter!.id;
       final content = _textCtrl.text;
       _dirty = false;
-      ref
-          .read(novelRepositoryProvider)
-          .saveChapterContent(
-            novelId: widget.novelId,
-            chapterId: chId,
-            content: content,
-          );
+      _repo.saveChapterContent(
+        novelId: widget.novelId,
+        chapterId: chId,
+        content: content,
+      );
     }
   }
 

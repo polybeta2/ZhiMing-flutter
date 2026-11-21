@@ -80,7 +80,8 @@ class OpenAiSseClient implements LLMClient {
     const maxPreTokenAttempts = 3;
     for (var attempt = 0; attempt < maxPreTokenAttempts; attempt++) {
       if (cancelToken?.isCancelled ?? false) return;
-      var yieldedAny = false;
+      // 仅以实际输出正文（ContentDelta）作为不可重放分界线；思考流中断可安全重连重试
+      var yieldedContent = false;
 
       Response<ResponseBody> response;
       try {
@@ -151,14 +152,14 @@ class OpenAiSseClient implements LLMClient {
 
           final errorText = extractInStreamError(payload);
           if (errorText != null) {
-            if (!yieldedAny && attempt < maxPreTokenAttempts - 1) {
+            if (!yieldedContent && attempt < maxPreTokenAttempts - 1) {
               throw _PreTokenRetrySignal(errorText);
             }
             throw LLMException.httpStatus(500, errorText);
           }
           for (final event in extractEvents(payload)) {
-            if (event is ContentDelta || event is ReasoningDelta) {
-              yieldedAny = true;
+            if (event is ContentDelta && event.text.isNotEmpty) {
+              yieldedContent = true;
             }
             yield event;
           }
@@ -169,7 +170,7 @@ class OpenAiSseClient implements LLMClient {
         continue;
       } on DioException catch (e) {
         if (CancelToken.isCancel(e)) return;
-        if (!yieldedAny && attempt < maxPreTokenAttempts - 1) {
+        if (!yieldedContent && attempt < maxPreTokenAttempts - 1) {
           await _retryBackoff(attempt, cancelToken);
           continue;
         }
@@ -179,7 +180,7 @@ class OpenAiSseClient implements LLMClient {
         );
       } catch (e) {
         if (e is LLMException) rethrow;
-        if (!yieldedAny && attempt < maxPreTokenAttempts - 1) {
+        if (!yieldedContent && attempt < maxPreTokenAttempts - 1) {
           await _retryBackoff(attempt, cancelToken);
           continue;
         }

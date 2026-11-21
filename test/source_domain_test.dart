@@ -1,8 +1,10 @@
 import 'dart:io';
 
+import 'package:dio/dio.dart';
 import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:zhiming/core/database/app_database.dart';
+import 'package:zhiming/core/llm/llm_types.dart';
 import 'package:zhiming/core/storage/blob_store.dart';
 import 'package:zhiming/domain/models/source_profile_models.dart';
 import 'package:zhiming/domain/source/continuation_context.dart';
@@ -15,6 +17,7 @@ import 'package:zhiming/domain/source/source_scan_chunker.dart';
 import 'package:zhiming/domain/source/source_time_window.dart';
 import 'package:zhiming/domain/writing/assistant_search.dart';
 import 'package:zhiming/features/source_archive/source_injection_helper.dart';
+import 'package:zhiming/features/source_archive/source_scan_controller.dart';
 
 void main() {
   group('SourceScanChunker & NovelTextCleaner & BatchHelper', () {
@@ -299,5 +302,126 @@ void main() {
         throwsFormatException,
       );
     });
+
+    test('SourceScanController fast & evidence Isolate.run do not capture CancelToken', () async {
+      TestWidgetsFlutterBinding.ensureInitialized();
+      final db = AppDatabase(NativeDatabase.memory());
+      final tmp = await Directory.systemTemp.createTemp('zm_scan_ctrl_');
+      final blobs = BlobStore(baseDirOverride: tmp);
+      final client = _StubScanLLMClient();
+      final provider = ProviderRecord(
+        id: 'p1',
+        name: 'Stub',
+        baseUrl: 'https://example.com/v1',
+        apiKeyId: 'k1',
+        modelName: 'stub-model',
+        temperature: 0.5,
+        maxTokens: 16384,
+        contextBudgetChars: 60000,
+        isDefault: true,
+        createdAt: DateTime(2026),
+      );
+      final controller = SourceScanController(
+        db: db,
+        blobs: blobs,
+        client: client,
+        provider: provider,
+      );
+
+      const sampleBook = '''
+第1章 雾起灯塔
+莫烬走进雾港钟楼，月莲在楼顶擦拭银色怀表。
+
+第2章 宿命回响
+罗娜在巷口递来一封密信，信封盖着旧教会火漆。
+''';
+      try {
+        await controller.start(
+          sourceText: sampleBook,
+          title: '雾港测试',
+          mode: ScanMode.fast,
+        );
+        expect(controller.phase, ScanPhase.done, reason: controller.errorMessage);
+        expect(controller.resultProfile, isNotNull);
+        expect(controller.resultProfile!.title, '雾港测试');
+
+        await controller.start(
+          sourceText: sampleBook,
+          title: '雾港测试',
+          mode: ScanMode.evidence,
+          isContinuation: true,
+        );
+        expect(controller.phase, ScanPhase.done, reason: controller.errorMessage);
+        expect(controller.resultProfile?.characters.isNotEmpty, isTrue);
+      } finally {
+        controller.dispose();
+        await db.close();
+        if (await tmp.exists()) {
+          await tmp.delete(recursive: true);
+        }
+      }
+    });
   });
+}
+
+class _StubScanLLMClient implements LLMClient {
+  @override
+  Future<List<String>> fetchModelIds({CancelToken? cancelToken}) async => const [
+    'stub-model',
+  ];
+
+  @override
+  Future<String> testConnection({CancelToken? cancelToken}) async => '连接成功';
+
+  @override
+  Stream<StreamEvent> streamChat(
+    List<LLMMessage> messages, {
+    required GenerationConfig config,
+    CancelToken? cancelToken,
+  }) async* {
+    final joined = messages.map((m) => m.content).join('\n');
+    String reply;
+    if (joined.contains('待查证的')) {
+      reply = '{"keywords": ["莫烬", "银色怀表"], "questions": ["怀表来历"], "focusCharacters": ["莫烬", "月莲"]}';
+    } else if (joined.contains('【原文证据片段】') || joined.contains('续写')) {
+      reply = '''
+{
+  "title": "雾港测试",
+  "summary": "莫烬与月莲在雾港调查旧教会密信。",
+  "characters": [{"name": "莫烬", "role": "主角", "currentState": "刚拿到火漆密信"}],
+  "timeline": [{"chapter": "第1-2章", "event": "登塔与收信"}],
+  "worldbuilding": [{"category": "物品", "name": "银色怀表", "content": "旧教会遗物"}],
+  "openThreads": [{"title": "旧教会火漆密信", "detail": "罗娜巷口递信", "plantedChapter": 2}],
+  "majorArcs": [{"name": "雾港序章", "chapters": "1-2", "summary": "初始调查"}]
+}
+''';
+    } else if (joined.contains('增量式微摘要')) {
+      reply = '''
+{"chapter": 1, "characters": [{"name": "莫烬", "traits": "冷静", "state_change": "进钟楼"}], "events": [{"summary": "莫烬见到月莲擦拭怀表", "participants": ["莫烬", "月莲"]}], "worldbuilding": [{"category": "物品", "name": "银色怀表", "content": "旧物"}], "open_threads": ["怀表来历"]}
+{"chapter": 2, "characters": [{"name": "罗娜", "traits": "神秘", "state_change": "巷口递信"}], "events": [{"summary": "罗娜递来火漆密信", "participants": ["罗娜", "莫烬"]}], "worldbuilding": [], "open_threads": ["旧教会火漆密信"]}
+''';
+    } else if (joined.contains('归并') || joined.contains('聚合') || joined.contains('档案')) {
+      reply = '''
+{
+  "title": "雾港测试",
+  "summary": "莫烬与月莲调查雾港密信。",
+  "characters": [{"name": "莫烬", "role": "主角", "currentState": "拿到密信"}],
+  "timeline": [{"chapter": "1", "event": "雾起灯塔"}],
+  "worldbuilding": [{"category": "地点", "name": "雾港钟楼", "content": "旧港地标"}],
+  "openThreads": [{"title": "密信来源", "detail": "罗娜交付", "plantedChapter": 2}]
+}
+''';
+    } else {
+      reply = '''
+{
+  "characters": [{"name": "莫烬", "traits": "冷静", "state_change": "进钟楼"}],
+  "events": [{"summary": "莫烬见到月莲并收到密信", "participants": ["莫烬", "月莲", "罗娜"]}],
+  "worldbuilding": [{"category": "物品", "name": "银色怀表", "content": "月莲持有"}],
+  "open_threads": ["密信来源"]
+}
+''';
+    }
+    yield ContentDelta(reply);
+    yield const UsageReport(promptTokens: 100, completionTokens: 80, cachedTokens: 60);
+  }
 }

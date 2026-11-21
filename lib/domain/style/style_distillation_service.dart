@@ -62,13 +62,9 @@ class StyleDistillationService {
     CancelToken? cancelToken,
     int Function(int maxExclusive)? pickRandom,
   }) async* {
-    // S1: 后台 Isolate 执行切章与本地计量（百万字不卡主线程）
+    // S1: 后台 Isolate 执行切章与本地计量（静态方法避免捕获 this/CancelToken）
     yield const StyleDistillStage('S1/4：切章抽样与本地文风计量…');
-    final s1 = await Isolate.run(() {
-      final metrics = StyleMetrics.compute(sourceText);
-      final chapters = StyleChapterSampler.split(sourceText);
-      return (metrics: metrics, chapters: chapters);
-    });
+    final s1 = await _computeS1InIsolate(sourceText);
 
     final metricsText = s1.metrics.toPromptText();
 
@@ -190,9 +186,7 @@ class StyleDistillationService {
 
     // S4: 后台构建 8-gram 复用索引 + 查重回炉修正
     yield const StyleDistillStage('S4/4：8-gram 原创性查重与示范校验…');
-    final index = await Isolate.run(
-      () => StyleMetrics.ngramIndex(sourceText, n: 8),
-    );
+    final index = await _ngramIndexInIsolate(sourceText);
     final violatedIndices = <int>[];
     for (var i = 0; i < fresh.examples.length; i++) {
       if (index.hasViolation(fresh.examples[i].styled)) {
@@ -355,6 +349,16 @@ class StyleDistillationService {
       localMetrics: metrics,
     );
   }
+
+  static Future<({StyleMetricsSnapshot metrics, List<SampleChapter> chapters})>
+  _computeS1InIsolate(String sourceText) => Isolate.run(() {
+    final metrics = StyleMetrics.compute(sourceText);
+    final chapters = StyleChapterSampler.split(sourceText);
+    return (metrics: metrics, chapters: chapters);
+  });
+
+  static Future<NgramIndex> _ngramIndexInIsolate(String sourceText) =>
+      Isolate.run(() => StyleMetrics.ngramIndex(sourceText, n: 8));
 }
 
 /// 风格体检评估器（7 维打分 + 按体检报告一键改写全文）

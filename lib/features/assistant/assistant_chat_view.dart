@@ -88,8 +88,20 @@ class _AssistantChatViewState extends ConsumerState<AssistantChatView> {
     _progress.dispose();
     _inputCtrl.dispose();
     _scrollCtrl.dispose();
-    WakelockPlus.disable();
+    unawaited(_disableWakelockSafely());
     super.dispose();
+  }
+
+  Future<void> _enableWakelockSafely() async {
+    try {
+      await WakelockPlus.enable();
+    } catch (_) {}
+  }
+
+  Future<void> _disableWakelockSafely() async {
+    try {
+      await WakelockPlus.disable();
+    } catch (_) {}
   }
 
   Future<void> _initThread() async {
@@ -370,7 +382,7 @@ class _AssistantChatViewState extends ConsumerState<AssistantChatView> {
     });
     _cancel = CancelToken();
     _progress.begin();
-    await WakelockPlus.enable();
+    await _enableWakelockSafely();
 
     final raw = StringBuffer();
     try {
@@ -409,7 +421,7 @@ class _AssistantChatViewState extends ConsumerState<AssistantChatView> {
         setState(() => _streaming = false);
       }
       _progress.finish();
-      await WakelockPlus.disable();
+      await _disableWakelockSafely();
 
       if (outcome.nextStep == CreationNextStep.requestStructure) {
         await _runCreationStream(CreationStreamKind.structure);
@@ -424,7 +436,7 @@ class _AssistantChatViewState extends ConsumerState<AssistantChatView> {
       if (mounted) setState(() => _error = '请求失败：$e');
     } finally {
       _progress.finish();
-      await WakelockPlus.disable();
+      await _disableWakelockSafely();
       if (mounted) setState(() => _streaming = false);
     }
   }
@@ -525,7 +537,7 @@ class _AssistantChatViewState extends ConsumerState<AssistantChatView> {
     });
     _cancel = CancelToken();
     _progress.begin();
-    await WakelockPlus.enable();
+    await _enableWakelockSafely();
 
     try {
       final client = await createClientForProvider(
@@ -604,7 +616,7 @@ class _AssistantChatViewState extends ConsumerState<AssistantChatView> {
       if (mounted) setState(() => _error = '助手请求失败：$e');
     } finally {
       _progress.finish();
-      await WakelockPlus.disable();
+      await _disableWakelockSafely();
       if (mounted) {
         setState(() {
           _streaming = false;
