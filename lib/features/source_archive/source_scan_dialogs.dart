@@ -7,6 +7,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:uuid/uuid.dart';
 
 import '../../core/database/app_database.dart';
+import '../../core/llm/llm_types.dart';
 import '../../core/llm/provider_client_factory.dart';
 import '../../core/platform/background_keep_alive.dart';
 import '../../core/security/api_key_vault.dart';
@@ -29,10 +30,11 @@ class SourceScanProgressDialog extends ConsumerStatefulWidget {
     required this.sourceText,
     required this.title,
     required this.mode,
-    required this.batchSize,
-    this.concurrency = 3,
+    this.batchSize = 10,
+    this.concurrency = 6,
     required this.isContinuation,
     required this.initialProvider,
+    this.fastProvider,
     this.presetProfileId,
   });
 
@@ -43,6 +45,7 @@ class SourceScanProgressDialog extends ConsumerStatefulWidget {
   final int concurrency;
   final bool isContinuation;
   final ProviderRecord initialProvider;
+  final ProviderRecord? fastProvider;
   final String? presetProfileId;
 
   static Future<SourceNovelProfileData?> show(
@@ -50,10 +53,11 @@ class SourceScanProgressDialog extends ConsumerStatefulWidget {
     required String sourceText,
     required String title,
     required ScanMode mode,
-    int batchSize = 3,
-    int concurrency = 3,
+    int batchSize = 10,
+    int concurrency = 6,
     bool isContinuation = false,
     required ProviderRecord initialProvider,
+    ProviderRecord? fastProvider,
     String? presetProfileId,
   }) {
     return showDialog<SourceNovelProfileData>(
@@ -67,6 +71,7 @@ class SourceScanProgressDialog extends ConsumerStatefulWidget {
         concurrency: concurrency,
         isContinuation: isContinuation,
         initialProvider: initialProvider,
+        fastProvider: fastProvider,
         presetProfileId: presetProfileId,
       ),
     );
@@ -81,14 +86,33 @@ class _SourceScanProgressDialogState
     extends ConsumerState<SourceScanProgressDialog> {
   SourceScanController? _ctrl;
   late ProviderRecord _provider;
+  ProviderRecord? _fastProvider;
   String? _activeProfileId;
 
   @override
   void initState() {
     super.initState();
     _provider = widget.initialProvider;
+    _fastProvider = widget.fastProvider;
     _activeProfileId = widget.presetProfileId ?? const Uuid().v4();
     WidgetsBinding.instance.addPostFrameCallback((_) => _startOrResume());
+  }
+
+  Future<({ProviderRecord? provider, LLMClient? client})>
+  _resolveSeparateFast(ProviderRecord mainProvider) async {
+    final candidate = _fastProvider;
+    if (candidate == null || candidate.id == mainProvider.id) {
+      return (provider: null, client: null);
+    }
+    try {
+      final fc = await createClientForProvider(
+        candidate,
+        ref.read(apiKeyVaultProvider),
+      );
+      return (provider: candidate, client: fc);
+    } catch (_) {
+      return (provider: null, client: null);
+    }
   }
 
   Future<void> _startOrResume() async {
@@ -97,6 +121,7 @@ class _SourceScanProgressDialogState
         _provider,
         ref.read(apiKeyVaultProvider),
       );
+      final fast = await _resolveSeparateFast(_provider);
       if (!mounted) return;
       if (_ctrl == null) {
         _ctrl = SourceScanController(
@@ -104,9 +129,16 @@ class _SourceScanProgressDialogState
           blobs: ref.read(blobStoreProvider),
           client: client,
           provider: _provider,
+          fastClient: fast.client,
+          fastProvider: fast.provider,
         )..addListener(_onTick);
       } else {
-        _ctrl!.updateProvider(_provider, client);
+        _ctrl!.updateProvider(
+          _provider,
+          client,
+          nextFastProvider: fast.provider ?? _provider,
+          nextFastClient: fast.client ?? client,
+        );
       }
       setState(() {});
       await _ctrl!.start(
@@ -149,7 +181,13 @@ class _SourceScanProgressDialogState
         picked,
         ref.read(apiKeyVaultProvider),
       );
-      _ctrl?.updateProvider(picked, client);
+      final fast = await _resolveSeparateFast(picked);
+      _ctrl?.updateProvider(
+        picked,
+        client,
+        nextFastProvider: fast.provider ?? picked,
+        nextFastClient: fast.client ?? client,
+      );
     } catch (e) {
       if (mounted) showZmSnackBar(context, '切换模型失败：$e', isError: true);
     }
@@ -172,6 +210,8 @@ class _SourceScanProgressDialogState
     final ratio = total > 0 ? (done / total).clamp(0.0, 1.0) : 0.0;
     final isRunning =
         phase == ScanPhase.mapping || phase == ScanPhase.reducing;
+    final separateFast =
+        _fastProvider != null && _fastProvider!.id != _provider.id;
 
     return AlertDialog(
       title: Row(
@@ -272,20 +312,34 @@ class _SourceScanProgressDialogState
             const SizedBox(height: 4),
             Row(
               children: [
-                Text(
-                  '模型：${_provider.name} (${_provider.modelName})',
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                Expanded(
+                  child: Text(
+                    '模型：${_provider.name} (${_provider.modelName})',
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    ),
+                    overflow: TextOverflow.ellipsis,
                   ),
                 ),
-                const Spacer(),
-                if (phase == ScanPhase.mapping)
+                if (phase == ScanPhase.mapping) ...[
+                  const SizedBox(width: 8),
                   Text(
                     '预计剩余 ${_formatEta(ctrl?.estimatedRemainingSeconds)}',
                     style: Theme.of(context).textTheme.bodySmall,
                   ),
+                ],
               ],
             ),
+            if (separateFast) ...[
+              const SizedBox(height: 2),
+              Text(
+                '并发通道：${widget.concurrency} · Map 模型：${_fastProvider!.name}',
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
+                overflow: TextOverflow.ellipsis,
+              ),
+            ],
             if (ctrl != null && isRunning) ...[
               const SizedBox(height: 10),
               StreamingStatusChip(tracker: ctrl.progress),
@@ -512,9 +566,10 @@ class _BatchCopyOutsourceDialogState
       sourceText: widget.sourceText,
       title: widget.bookTitle,
       mode: ScanMode.full,
-      batchSize: 3,
+      batchSize: 10,
       isContinuation: widget.isContinuation,
       initialProvider: provider,
+      fastProvider: ref.read(fastToolProviderProvider),
       presetProfileId: _pid,
     );
     if (mounted && profile != null) {
@@ -681,8 +736,8 @@ class _ContinuationImportDialogState
   int _continueFrom = 1;
   bool _useBatchCopy = false;
   ScanMode _mode = ScanMode.evidence;
-  int _batchSize = 3;
-  int _concurrency = 3;
+  int _batchSize = 10;
+  int _concurrency = 6;
   bool _loadingFile = false;
 
   Future<void> _pickFile() async {
@@ -824,6 +879,7 @@ class _ContinuationImportDialogState
         concurrency: _concurrency,
         isContinuation: true,
         initialProvider: provider,
+        fastProvider: ref.read(fastToolProviderProvider),
       );
     }
     if (mounted && profile != null) {
@@ -927,15 +983,9 @@ class _ContinuationImportDialogState
                             child: DropdownButtonFormField<int>(
                               initialValue: _batchSize,
                               decoration: const InputDecoration(
-                                labelText: '每批块数',
+                                labelText: '每批章/块数',
                               ),
-                              items: List.generate(
-                                10,
-                                (i) => DropdownMenuItem(
-                                  value: i + 1,
-                                  child: Text(i == 0 ? '逐块 (1)' : '${i + 1} 块'),
-                                ),
-                              ),
+                              items: buildScanBatchSizeItems(_batchSize),
                               onChanged: (v) {
                                 if (v != null) setState(() => _batchSize = v);
                               },
@@ -948,23 +998,9 @@ class _ContinuationImportDialogState
                         DropdownButtonFormField<int>(
                           initialValue: _concurrency,
                           decoration: const InputDecoration(
-                            labelText: '并发扫描通道数（提速用）',
+                            labelText: '并发扫描通道数',
                           ),
-                          items: const [
-                            DropdownMenuItem(
-                              value: 1,
-                              child: Text('1 路串行（最稳）'),
-                            ),
-                            DropdownMenuItem(value: 2, child: Text('2 路并发')),
-                            DropdownMenuItem(
-                              value: 3,
-                              child: Text('3 路并发（推荐）'),
-                            ),
-                            DropdownMenuItem(
-                              value: 4,
-                              child: Text('4 路并发（极速）'),
-                            ),
-                          ],
+                          items: buildScanConcurrencyItems(_concurrency),
                           onChanged: (v) {
                             if (v != null) setState(() => _concurrency = v);
                           },
@@ -989,4 +1025,45 @@ class _ContinuationImportDialogState
       ],
     );
   }
+}
+
+/// 构造扫描每批章/块数下拉项，兼容历史任务的旧 batchSize 值以防止 Dropdown 断言异常。
+List<DropdownMenuItem<int>> buildScanBatchSizeItems(int currentValue) {
+  const base = [1, 3, 6, 10, 15];
+  final options = base.contains(currentValue)
+      ? base
+      : ([...base, currentValue]..sort());
+  return options
+      .map(
+        (n) => DropdownMenuItem<int>(
+          value: n,
+          child: Text(switch (n) {
+            1 => '逐块 (1)',
+            10 => '10 块（推荐大窗）',
+            _ => '$n 块',
+          }),
+        ),
+      )
+      .toList();
+}
+
+/// 构造扫描并发通道数下拉项，兼容旧配置值以防止 Dropdown 断言异常。
+List<DropdownMenuItem<int>> buildScanConcurrencyItems(int currentValue) {
+  const base = [1, 2, 4, 6, 8, 12];
+  final options = base.contains(currentValue)
+      ? base
+      : ([...base, currentValue]..sort());
+  return options
+      .map(
+        (n) => DropdownMenuItem<int>(
+          value: n,
+          child: Text(switch (n) {
+            1 => '1 路串行（最稳）',
+            6 => '6 路并发（推荐）',
+            12 => '12 路极速',
+            _ => '$n 路并发',
+          }),
+        ),
+      )
+      .toList();
 }

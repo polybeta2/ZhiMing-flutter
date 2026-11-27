@@ -38,6 +38,21 @@ final class StyleDistillCompleted extends StyleDistillEvent {
   final StyleProfileData profile;
 }
 
+List<LLMMessage> _withSystemCacheControl(List<LLMMessage> messages) {
+  if (messages.isEmpty ||
+      messages.first.role != LLMRole.system ||
+      messages.first.cacheControl) {
+    return messages;
+  }
+  final out = List<LLMMessage>.from(messages);
+  out[0] = LLMMessage(
+    role: LLMRole.system,
+    content: out[0].content,
+    cacheControl: true,
+  );
+  return out;
+}
+
 /// 文风蒸馏四阶段流水线（S1 计量抽样 → S2 自适应机制分析 → S3 风格卡汇总 → S4 8-gram 查重回炉）
 class StyleDistillationService {
   const StyleDistillationService({
@@ -46,6 +61,7 @@ class StyleDistillationService {
     this.providerExtra,
     this.temperature = 0.4,
     this.maxTokens = 12288,
+    this.contextBudgetChars = 60000,
   });
 
   final LLMClient client;
@@ -53,6 +69,7 @@ class StyleDistillationService {
   final String? providerExtra;
   final double temperature;
   final int maxTokens;
+  final int contextBudgetChars;
 
   Stream<StyleDistillEvent> distill({
     required String sourceText,
@@ -67,10 +84,17 @@ class StyleDistillationService {
     final s1 = await _computeS1InIsolate(sourceText);
 
     final metricsText = s1.metrics.toPromptText();
+    final effectiveSampleCap = contextBudgetChars >= 80000
+        ? PromptLimits.styleSampleCapLong
+        : PromptLimits.styleSampleCap;
+    final effectiveChapterCap = contextBudgetChars >= 80000
+        ? PromptLimits.styleChapterCapLong
+        : PromptLimits.styleChapterCap;
 
     // S2: 机制分析（支持断点跳过 + 自适应补样最多 3 轮）
     String analysisRaw;
     Map<String, dynamic>? analysisJson;
+    List<LLMMessage>? s2Messages;
 
     if (cachedAnalysisRaw != null && cachedAnalysisRaw.trim().isNotEmpty) {
       final parsed = LLMJSONParser.decodeAny(cachedAnalysisRaw);
@@ -100,23 +124,31 @@ class StyleDistillationService {
           sourceText,
           s1.chapters,
           selectedIdx,
+          sampleCap: effectiveSampleCap,
+          chapterCap: effectiveChapterCap,
         );
-        final msgs = PromptTemplates.applyingExtra(providerExtra, [
-          LLMMessage(
-            role: LLMRole.system,
-            content: library.resolvedText(PromptID.styleDistillAnalyze),
-          ),
-          LLMMessage(
-            role: LLMRole.user,
-            content: '【计量数据】\n$metricsText\n\n【样本文本】\n$sampleBlock',
-          ),
-        ]);
+        final msgs = _withSystemCacheControl(
+          PromptTemplates.applyingExtra(providerExtra, [
+            LLMMessage(
+              role: LLMRole.system,
+              content: library.resolvedText(PromptID.styleDistillAnalyze),
+              cacheControl: true,
+            ),
+            LLMMessage(
+              role: LLMRole.user,
+              content: '【计量数据】\n$metricsText\n\n【样本文本】\n$sampleBlock',
+            ),
+          ]),
+        );
         final buf = StringBuffer();
         await for (final ev in client.streamChat(
           msgs,
           config: GenerationConfig(
             temperature: temperature,
             maxTokens: maxTokens,
+            jsonMode: true,
+            reasoningEffort: ReasoningEffort.medium,
+            enablePromptCacheControl: true,
           ),
           cancelToken: cancelToken,
         )) {
@@ -141,6 +173,7 @@ class StyleDistillationService {
           continue;
         }
         analysisJson = decoded;
+        s2Messages = msgs;
         break;
       }
       if (analysisJson == null) {
@@ -151,22 +184,44 @@ class StyleDistillationService {
       }
     }
 
-    // S3: 汇总可执行风格卡
+    // S3: 汇总可执行风格卡（同会话 S2 接续多轮对话以命中 KV Cache）
     yield const StyleDistillStage('S3/4：汇总可执行风格卡与改写示范…');
-    final cardMsgs = PromptTemplates.applyingExtra(providerExtra, [
-      LLMMessage(
-        role: LLMRole.system,
-        content: library.resolvedText(PromptID.styleDistillCard),
-      ),
-      LLMMessage(
-        role: LLMRole.user,
-        content: '【机制分析】\n${jsonEncode(analysisJson)}',
-      ),
-    ]);
+    final List<LLMMessage> cardMsgs;
+    if (s2Messages != null && analysisRaw.trim().isNotEmpty) {
+      cardMsgs = [
+        ...s2Messages,
+        LLMMessage(role: LLMRole.assistant, content: analysisRaw),
+        LLMMessage(
+          role: LLMRole.user,
+          content:
+              '${library.resolvedText(PromptID.styleDistillCard)}\n\n请直接结合前文【样本文本】的真实语感与上述已完成的【机制分析】，输出可执行风格卡 JSON（不要代码块或多余说明）。',
+        ),
+      ];
+    } else {
+      cardMsgs = _withSystemCacheControl(
+        PromptTemplates.applyingExtra(providerExtra, [
+          LLMMessage(
+            role: LLMRole.system,
+            content: library.resolvedText(PromptID.styleDistillCard),
+            cacheControl: true,
+          ),
+          LLMMessage(
+            role: LLMRole.user,
+            content: '【机制分析】\n${jsonEncode(analysisJson)}',
+          ),
+        ]),
+      );
+    }
     final cardBuf = StringBuffer();
     await for (final ev in client.streamChat(
       cardMsgs,
-      config: GenerationConfig(temperature: temperature, maxTokens: maxTokens),
+      config: GenerationConfig(
+        temperature: temperature,
+        maxTokens: maxTokens,
+        jsonMode: true,
+        reasoningEffort: ReasoningEffort.medium,
+        enablePromptCacheControl: true,
+      ),
       cancelToken: cancelToken,
     )) {
       yield StyleDistillStreamDelta(ev);
@@ -205,20 +260,29 @@ class StyleDistillationService {
           '- index=$idx | plain=${ex.plain} | styled=${ex.styled} | principle=${ex.principle}',
         );
       }
-      final fixMsgs = PromptTemplates.applyingExtra(providerExtra, [
-        LLMMessage(
-          role: LLMRole.system,
-          content: library.resolvedText(PromptID.styleDistillFix),
-        ),
-        LLMMessage(
-          role: LLMRole.user,
-          content: '【违规示范】\n${listBuf.toString()}',
-        ),
-      ]);
+      final fixMsgs = _withSystemCacheControl(
+        PromptTemplates.applyingExtra(providerExtra, [
+          LLMMessage(
+            role: LLMRole.system,
+            content: library.resolvedText(PromptID.styleDistillFix),
+            cacheControl: true,
+          ),
+          LLMMessage(
+            role: LLMRole.user,
+            content: '【违规示范】\n${listBuf.toString()}',
+          ),
+        ]),
+      );
       final fixBuf = StringBuffer();
       await for (final ev in client.streamChat(
         fixMsgs,
-        config: const GenerationConfig(temperature: 0.5, maxTokens: 12288),
+        config: const GenerationConfig(
+          temperature: 0.5,
+          maxTokens: 12288,
+          jsonMode: true,
+          reasoningEffort: ReasoningEffort.low,
+          enablePromptCacheControl: true,
+        ),
         cancelToken: cancelToken,
       )) {
         yield StyleDistillStreamDelta(ev);
@@ -269,30 +333,30 @@ class StyleDistillationService {
   static String _renderSample(
     String sourceText,
     List<SampleChapter> chapters,
-    List<int> selectedIndices,
-  ) {
+    List<int> selectedIndices, {
+    int sampleCap = PromptLimits.styleSampleCap,
+    int chapterCap = PromptLimits.styleChapterCap,
+  }) {
     final buf = StringBuffer();
     if (chapters.isEmpty || selectedIndices.isEmpty) {
       for (final seg in StyleMetrics.sampleSegments(
         sourceText,
-        PromptLimits.styleSampleCap,
+        sampleCap,
       )) {
         buf.writeln('=== ${seg.label} ===\n${seg.text}\n');
       }
     } else {
       for (final i in selectedIndices) {
         final ch = chapters[i];
-        final body = ch.body.length > PromptLimits.styleChapterCap
-            ? ch.body.substring(0, PromptLimits.styleChapterCap)
+        final body = ch.body.length > chapterCap
+            ? ch.body.substring(0, chapterCap)
             : ch.body;
         buf.writeln('=== ${ch.marker} ===\n$body\n');
-        if (buf.length >= PromptLimits.styleSampleCap) break;
+        if (buf.length >= sampleCap) break;
       }
     }
     final out = buf.toString();
-    return out.length > PromptLimits.styleSampleCap
-        ? out.substring(0, PromptLimits.styleSampleCap)
-        : out;
+    return out.length > sampleCap ? out.substring(0, sampleCap) : out;
   }
 
   static StyleProfileData _assembleProfile({
@@ -387,18 +451,27 @@ class StyleEvaluator {
       )
       ..writeln('\n【待检草稿】\n$draft');
 
-    final msgs = PromptTemplates.applyingExtra(providerExtra, [
-      LLMMessage(
-        role: LLMRole.system,
-        content: library.resolvedText(PromptID.styleEval),
-      ),
-      LLMMessage(role: LLMRole.user, content: user.toString()),
-    ]);
+    final msgs = _withSystemCacheControl(
+      PromptTemplates.applyingExtra(providerExtra, [
+        LLMMessage(
+          role: LLMRole.system,
+          content: library.resolvedText(PromptID.styleEval),
+          cacheControl: true,
+        ),
+        LLMMessage(role: LLMRole.user, content: user.toString()),
+      ]),
+    );
 
     final raw = StringBuffer();
     await for (final ev in client.streamChat(
       msgs,
-      config: const GenerationConfig(temperature: 0.2, maxTokens: 12288),
+      config: const GenerationConfig(
+        temperature: 0.2,
+        maxTokens: 12288,
+        jsonMode: true,
+        reasoningEffort: ReasoningEffort.medium,
+        enablePromptCacheControl: true,
+      ),
       cancelToken: cancelToken,
     )) {
       onEvent?.call(ev);
@@ -447,12 +520,18 @@ class StyleEvaluator {
           '请严格依据以下风格体检报告与基准逐项改写全文，保留剧情、人物、对话语义与设定不变，只输出修改后的完整正文：\n\n$issuesBuf',
       styleCard: evalCard,
     );
-    msgs = PromptTemplates.applyingExtra(providerExtra, msgs);
+    msgs = _withSystemCacheControl(
+      PromptTemplates.applyingExtra(providerExtra, msgs),
+    );
 
     final out = StringBuffer();
     await for (final ev in client.streamChat(
       msgs,
-      config: GenerationConfig(temperature: 0.45, maxTokens: maxTokens),
+      config: GenerationConfig(
+        temperature: 0.45,
+        maxTokens: maxTokens,
+        enablePromptCacheControl: true,
+      ),
       cancelToken: cancelToken,
     )) {
       onEvent?.call(ev);

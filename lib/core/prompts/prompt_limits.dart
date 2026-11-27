@@ -16,6 +16,8 @@ abstract final class PromptLimits {
   static const int styleProfileEvalCap = 5000;
   static const int styleSampleCap = 40000;
   static const int styleChapterCap = 3000;
+  static const int styleSampleCapLong = 72000;
+  static const int styleChapterCapLong = 8000;
   static const int styleEvidenceCap = 80;
 }
 

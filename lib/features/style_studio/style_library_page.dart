@@ -531,6 +531,7 @@ class _StyleDistillSheetState extends ConsumerState<_StyleDistillSheet> {
         client: client,
         library: ref.read(promptLibraryProvider),
         providerExtra: provider.systemPromptExtra,
+        contextBudgetChars: provider.contextBudgetChars,
       );
       final db = ref.read(appDatabaseProvider);
 

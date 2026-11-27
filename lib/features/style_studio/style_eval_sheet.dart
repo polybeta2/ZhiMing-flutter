@@ -64,6 +64,19 @@ class _StyleEvalSheetState extends ConsumerState<StyleEvalSheet> {
     super.dispose();
   }
 
+  ProviderRecord _resolveProvider({required bool preferFastTool}) {
+    final defaultProvider = ref.read(defaultProviderProvider);
+    final hasExplicitOverride =
+        defaultProvider != null && widget.provider.id != defaultProvider.id;
+    if (hasExplicitOverride) return widget.provider;
+    if (preferFastTool) {
+      return ref.read(fastToolProviderProvider) ??
+          defaultProvider ??
+          widget.provider;
+    }
+    return defaultProvider ?? widget.provider;
+  }
+
   Future<void> _runEval() async {
     _cancel?.cancel();
     _cancel = CancelToken();
@@ -74,14 +87,15 @@ class _StyleEvalSheetState extends ConsumerState<StyleEvalSheet> {
     });
     _progress.begin();
     try {
+      final evalProvider = _resolveProvider(preferFastTool: true);
       final client = await createClientForProvider(
-        widget.provider,
+        evalProvider,
         ref.read(apiKeyVaultProvider),
       );
       final evaluator = StyleEvaluator(
         client: client,
         library: ref.read(promptLibraryProvider),
-        providerExtra: widget.provider.systemPromptExtra,
+        providerExtra: evalProvider.systemPromptExtra,
       );
       final res = await evaluator.evaluate(
         draft: widget.draft,
@@ -107,20 +121,21 @@ class _StyleEvalSheetState extends ConsumerState<StyleEvalSheet> {
     setState(() => _fixing = true);
     _fixProgress.begin();
     try {
+      final fixProvider = _resolveProvider(preferFastTool: false);
       final client = await createClientForProvider(
-        widget.provider,
+        fixProvider,
         ref.read(apiKeyVaultProvider),
       );
       final evaluator = StyleEvaluator(
         client: client,
         library: ref.read(promptLibraryProvider),
-        providerExtra: widget.provider.systemPromptExtra,
+        providerExtra: fixProvider.systemPromptExtra,
       );
       final rewritten = await evaluator.applyFixes(
         draft: widget.draft,
         evalResult: res,
         evalCard: widget.evalCard,
-        maxTokens: widget.provider.maxTokens,
+        maxTokens: fixProvider.maxTokens,
         onEvent: _fixProgress.handle,
         cancelToken: _fixCancel,
       );

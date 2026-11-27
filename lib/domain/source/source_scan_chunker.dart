@@ -33,11 +33,22 @@ class SourceScanChunker {
   static const int fastTailChars = 600;
   static const int fastMinSplit = 2500;
   static const int fullMaxChunk = 4000;
+  static const int modernFullMaxChunk = 14000;
   static const int fallbackWindow = 4000;
 
-  static List<SourceScanChunk> chunks(String text, {required ScanMode mode}) {
+  static List<SourceScanChunk> chunks(
+    String text, {
+    required ScanMode mode,
+    int? maxChunkChars,
+  }) {
+    final fullCap = (maxChunkChars ?? fullMaxChunk).clamp(500, 100000);
     final chapters = StyleChapterSampler.split(text);
-    if (chapters.isEmpty) return _fallbackChunks(text);
+    if (chapters.isEmpty) {
+      return _fallbackChunks(
+        text,
+        windowSize: mode == ScanMode.full ? fullCap : fallbackWindow,
+      );
+    }
     final result = <SourceScanChunk>[];
     var validChapterIdx = 0;
     for (var i = 0; i < chapters.length; i++) {
@@ -72,7 +83,7 @@ class SourceScanChunker {
             );
           }
         case ScanMode.full:
-          if (body.length <= fullMaxChunk) {
+          if (body.length <= fullCap) {
             result.add(
               SourceScanChunk(
                 chapterIndex: chIdx,
@@ -82,11 +93,11 @@ class SourceScanChunker {
               ),
             );
           } else {
-            final partCount = (body.length + fullMaxChunk - 1) ~/ fullMaxChunk;
+            final partCount = (body.length + fullCap - 1) ~/ fullCap;
             var offset = 0;
             var partIdx = 0;
             while (offset < body.length) {
-              final end = (offset + fullMaxChunk).clamp(0, body.length);
+              final end = (offset + fullCap).clamp(0, body.length);
               result.add(
                 SourceScanChunk(
                   chapterIndex: chIdx,
@@ -105,7 +116,47 @@ class SourceScanChunker {
     return result;
   }
 
-  static List<SourceScanChunk> _fallbackChunks(String text) {
+  /// 按字符预算与最大块数将连续未完成分块打包成批次；遇已完成下标即断开，
+  /// 每组至少包含 1 块（即使单块正文已超过 [targetBatchChars]）。
+  static List<List<({int pos, SourceScanChunk chunk})>> packByCharBudget(
+    List<SourceScanChunk> chunks,
+    Set<int> doneIndexes, {
+    int targetBatchChars = 42000,
+    int maxChunksPerBatch = 12,
+  }) {
+    if (chunks.isEmpty) return const [];
+    final maxPerBatch = maxChunksPerBatch < 1 ? 1 : maxChunksPerBatch;
+    final budget = targetBatchChars < 0 ? 0 : targetBatchChars;
+    final groups = <List<({int pos, SourceScanChunk chunk})>>[];
+
+    var pos = 0;
+    while (pos < chunks.length) {
+      if (doneIndexes.contains(pos)) {
+        pos += 1;
+        continue;
+      }
+      final first = chunks[pos];
+      final group = <({int pos, SourceScanChunk chunk})>[(pos: pos, chunk: first)];
+      var groupChars = first.text.length;
+      var nextPos = pos + 1;
+      while (nextPos < chunks.length && group.length < maxPerBatch) {
+        if (doneIndexes.contains(nextPos)) break;
+        final candidate = chunks[nextPos];
+        if (groupChars + candidate.text.length > budget) break;
+        group.add((pos: nextPos, chunk: candidate));
+        groupChars += candidate.text.length;
+        nextPos += 1;
+      }
+      groups.add(group);
+      pos = nextPos;
+    }
+    return groups;
+  }
+
+  static List<SourceScanChunk> _fallbackChunks(
+    String text, {
+    int windowSize = fallbackWindow,
+  }) {
     final cleaned = NovelTextCleaner.cleanChapterBody(
       NovelTextCleaner.stripLeadingMetadata(text),
     );
@@ -114,7 +165,7 @@ class SourceScanChunker {
     var offset = 0;
     var index = 0;
     while (offset < cleaned.length) {
-      final end = (offset + fallbackWindow).clamp(0, cleaned.length);
+      final end = (offset + windowSize).clamp(0, cleaned.length);
       out.add(
         SourceScanChunk(
           chapterIndex: index,

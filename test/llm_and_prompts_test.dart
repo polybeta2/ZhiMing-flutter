@@ -1,14 +1,57 @@
+import 'dart:convert';
+import 'dart:typed_data';
+
+import 'package:dio/dio.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:zhiming/core/database/app_database.dart' show ProviderRecord;
 import 'package:zhiming/core/llm/llm_json_parser.dart';
 import 'package:zhiming/core/llm/llm_types.dart';
 import 'package:zhiming/core/llm/openai_sse_client.dart';
+import 'package:zhiming/core/llm/provider_client_factory.dart';
+import 'package:zhiming/core/llm/stream_progress.dart';
 import 'package:zhiming/core/platform/background_keep_alive.dart';
 import 'package:zhiming/core/prompts/prompt_defaults.dart';
 import 'package:zhiming/core/prompts/prompt_library.dart';
 import 'package:zhiming/core/prompts/prompt_limits.dart';
 import 'package:zhiming/core/prompts/prompt_templates.dart';
 import 'package:zhiming/domain/writing/prose_checker.dart';
+
+class _ScriptedHttpClientAdapter implements HttpClientAdapter {
+  _ScriptedHttpClientAdapter(this._handler);
+
+  final Future<ResponseBody> Function(
+    RequestOptions options,
+    Map<String, dynamic> body,
+    int callIndex,
+  )
+  _handler;
+
+  int callCount = 0;
+
+  @override
+  Future<ResponseBody> fetch(
+    RequestOptions options,
+    Stream<Uint8List>? requestStream,
+    Future<void>? cancelFuture,
+  ) async {
+    final bytes = <int>[];
+    if (requestStream != null) {
+      await for (final chunk in requestStream) {
+        bytes.addAll(chunk);
+      }
+    }
+    final decodedBody = bytes.isNotEmpty
+        ? Map<String, dynamic>.from(jsonDecode(utf8.decode(bytes)) as Map)
+        : Map<String, dynamic>.from(options.data as Map);
+    final idx = callCount++;
+    return _handler(options, decodedBody, idx);
+  }
+
+  @override
+  void close({bool force = false}) {}
+}
 
 void main() {
   group('OpenAiSseClient framing & error handling', () {
@@ -307,5 +350,279 @@ void main() {
       final desktopService = BackgroundKeepAliveService.forTesting(isIos: false);
       expect((await desktopService.getStatus()).active, isFalse);
     });
+  });
+
+  group('Wave 1: LLM Protocol Upgrade, Dual-Model Routing & Cache Telemetry', () {
+    test(
+      'buildRequestBody includes response_format, reasoning_effort and Anthropic cache_control',
+      () {
+        const messages = [
+          LLMMessage(
+            role: LLMRole.system,
+            content: 'sys',
+            cacheControl: true,
+          ),
+          LLMMessage(role: LLMRole.user, content: 'usr'),
+        ];
+        const config = GenerationConfig(
+          temperature: 0.3,
+          maxTokens: 2048,
+          includeUsage: true,
+          jsonMode: true,
+          reasoningEffort: ReasoningEffort.low,
+          enablePromptCacheControl: true,
+        );
+
+        final bodyWithCache = OpenAiSseClient.buildRequestBody(
+          model: 'claude-3-7-sonnet',
+          messages: messages,
+          config: config,
+          useExplicitCacheControl: true,
+        );
+        expect(bodyWithCache['response_format'], {'type': 'json_object'});
+        expect(bodyWithCache['reasoning_effort'], 'low');
+        final encodedMsgs = bodyWithCache['messages'] as List<dynamic>;
+        expect(encodedMsgs.length, 2);
+        expect(encodedMsgs[0], {
+          'role': 'system',
+          'content': [
+            {
+              'type': 'text',
+              'text': 'sys',
+              'cache_control': {'type': 'ephemeral'},
+            },
+          ],
+        });
+        expect(encodedMsgs[1], {'role': 'user', 'content': 'usr'});
+
+        final bodyWithoutCache = OpenAiSseClient.buildRequestBody(
+          model: 'gpt-4o',
+          messages: messages,
+          config: config,
+          useExplicitCacheControl: false,
+        );
+        final plainMsgs = bodyWithoutCache['messages'] as List<dynamic>;
+        expect(plainMsgs[0], {'role': 'system', 'content': 'sys'});
+      },
+    );
+
+    test(
+      'extractEvents parses Anthropic cache_read_input_tokens and cache_creation_input_tokens',
+      () {
+        const frame =
+            '{"choices":[],"usage":{"prompt_tokens":4000,"completion_tokens":120,"cache_read_input_tokens":3200,"cache_creation_input_tokens":800}}';
+        final events = OpenAiSseClient.extractEvents(frame);
+        final usage = events.whereType<UsageReport>().single;
+        expect(usage.promptTokens, 4000);
+        expect(usage.completionTokens, 120);
+        expect(usage.cachedTokens, 3200);
+        expect(usage.cacheCreationTokens, 800);
+        expect(usage.cacheHitRate, closeTo(0.8, 0.001));
+      },
+    );
+
+    test(
+      'streamChat falls back on HTTP 400 by stripping optional protocol extensions',
+      () async {
+        final capturedBodies = <Map<String, dynamic>>[];
+        final dio = Dio();
+        dio.httpClientAdapter = _ScriptedHttpClientAdapter((
+          options,
+          body,
+          callIndex,
+        ) async {
+          capturedBodies.add(body);
+          if (callIndex == 0) {
+            return ResponseBody.fromString(
+              '{"error":{"message":"unknown parameter response_format"}}',
+              400,
+              headers: {
+                Headers.contentTypeHeader: [Headers.jsonContentType],
+              },
+            );
+          }
+          return ResponseBody.fromString(
+            'data: {"choices":[{"delta":{"content":"ok"}}]}\n\ndata: [DONE]\n\n',
+            200,
+            headers: {
+              Headers.contentTypeHeader: ['text/event-stream'],
+            },
+          );
+        });
+
+        final client = OpenAiSseClient(
+          baseUrl: 'https://api.anthropic.com/v1',
+          apiKey: 'sk-test-key',
+          model: 'claude-sonnet-4',
+          dio: dio,
+        );
+
+        final events = await client
+            .streamChat(
+              const [
+                LLMMessage(
+                  role: LLMRole.system,
+                  content: 'sys',
+                  cacheControl: true,
+                ),
+                LLMMessage(role: LLMRole.user, content: 'hi'),
+              ],
+              config: const GenerationConfig(
+                jsonMode: true,
+                reasoningEffort: ReasoningEffort.low,
+                enablePromptCacheControl: true,
+              ),
+            )
+            .toList();
+
+        expect(capturedBodies.length, 2);
+        expect(capturedBodies[0]['response_format'], {'type': 'json_object'});
+        expect(capturedBodies[0]['reasoning_effort'], 'low');
+        expect((capturedBodies[0]['messages'] as List).first['content'], isList);
+
+        expect(capturedBodies[1].containsKey('response_format'), isFalse);
+        expect(capturedBodies[1].containsKey('reasoning_effort'), isFalse);
+        expect((capturedBodies[1]['messages'] as List).first['content'], 'sys');
+
+        final content = events.whereType<ContentDelta>().map((e) => e.text).join();
+        expect(content, 'ok');
+      },
+    );
+
+    test(
+      'resolveProviderForRole routes fastTool when found and falls back to defaultProvider',
+      () {
+        final primary = ProviderRecord(
+          id: 'p-primary',
+          name: '主力模型',
+          baseUrl: 'https://api.example.com/v1',
+          apiKeyId: 'k1',
+          modelName: 'claude-sonnet',
+          temperature: 0.8,
+          maxTokens: 16384,
+          contextBudgetChars: 60000,
+          isDefault: true,
+          createdAt: DateTime(2026),
+        );
+        final fast = ProviderRecord(
+          id: 'p-fast',
+          name: '极速模型',
+          baseUrl: 'https://api.example.com/v1',
+          apiKeyId: 'k2',
+          modelName: 'gpt-4o-mini',
+          temperature: 0.3,
+          maxTokens: 4096,
+          contextBudgetChars: 60000,
+          isDefault: false,
+          createdAt: DateTime(2026),
+        );
+        final providers = [primary, fast];
+
+        expect(
+          resolveProviderForRole(
+            providers,
+            primary,
+            'p-fast',
+            ProviderRole.primary,
+          )?.id,
+          'p-primary',
+        );
+        expect(
+          resolveProviderForRole(
+            providers,
+            primary,
+            'p-fast',
+            ProviderRole.fastTool,
+          )?.id,
+          'p-fast',
+        );
+        expect(
+          resolveProviderForRole(
+            providers,
+            primary,
+            null,
+            ProviderRole.fastTool,
+          )?.id,
+          'p-primary',
+        );
+        expect(
+          resolveProviderForRole(
+            providers,
+            primary,
+            'non-existent',
+            ProviderRole.fastTool,
+          )?.id,
+          'p-primary',
+        );
+        expect(
+          resolveProviderForRole(
+            const [],
+            null,
+            'p-fast',
+            ProviderRole.fastTool,
+          ),
+          isNull,
+        );
+      },
+    );
+
+    test(
+      'FastToolProviderIdNotifier persists and reloads from SharedPreferences',
+      () async {
+        SharedPreferences.setMockInitialValues({
+          'provider.fastToolProviderId': 'p-fast',
+        });
+        final container = ProviderContainer();
+        addTearDown(container.dispose);
+
+        container.read(fastToolProviderIdProvider);
+        await Future<void>.delayed(Duration.zero);
+        expect(container.read(fastToolProviderIdProvider), 'p-fast');
+
+        await container
+            .read(fastToolProviderIdProvider.notifier)
+            .setProviderId('p-other');
+        expect(container.read(fastToolProviderIdProvider), 'p-other');
+
+        await container
+            .read(fastToolProviderIdProvider.notifier)
+            .setProviderId(null);
+        expect(container.read(fastToolProviderIdProvider), isNull);
+      },
+    );
+
+    test(
+      'StreamProgressTracker exposes cache statusText and preserves lastCompletedUsage across finish()',
+      () {
+        final tracker = StreamProgressTracker();
+        addTearDown(tracker.dispose);
+
+        tracker.begin();
+        expect(tracker.lastCompletedUsage, isNull);
+        expect(tracker.value.lastUsage, isNull);
+
+        tracker.handle(const ContentDelta('正文'));
+        tracker.handle(
+          const UsageReport(
+            promptTokens: 1000,
+            completionTokens: 100,
+            cachedTokens: 850,
+            cacheCreationTokens: 150,
+          ),
+        );
+        expect(tracker.value.statusText, contains('· 缓存命中 85%'));
+        expect(tracker.lastCompletedUsage?.cacheCreationTokens, 150);
+
+        tracker.finish();
+        expect(tracker.value.stage, StreamStage.idle);
+        expect(tracker.value.isActive, isFalse);
+        expect(tracker.lastCompletedUsage?.cachedTokens, 850);
+        expect(tracker.value.lastUsage?.cachedTokens, 850);
+
+        tracker.begin();
+        expect(tracker.lastCompletedUsage, isNull);
+        expect(tracker.value.lastUsage, isNull);
+      },
+    );
   });
 }

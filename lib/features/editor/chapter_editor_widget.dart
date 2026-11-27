@@ -531,9 +531,10 @@ class _ChapterEditorWidgetState extends ConsumerState<ChapterEditorWidget> {
       directorConfig: directorCfg,
       promptLibrary: lib,
     );
-    var msgs = req.isNewChapter
+    final msgs = req.isNewChapter
         ? PromptTemplates.writing(
             library: lib,
+            invariantExtras: [provider.systemPromptExtra, antiAI, r18Text],
             staticContext: ctx.staticPrefix,
             renderedContext: ctx.dynamicSuffix.isNotEmpty
                 ? ctx.dynamicSuffix
@@ -543,6 +544,7 @@ class _ChapterEditorWidgetState extends ConsumerState<ChapterEditorWidget> {
           )
         : PromptTemplates.continueWriting(
             library: lib,
+            invariantExtras: [provider.systemPromptExtra, antiAI, r18Text],
             staticContext: ctx.staticPrefix,
             renderedContext: ctx.dynamicSuffix.isNotEmpty
                 ? ctx.dynamicSuffix
@@ -550,9 +552,6 @@ class _ChapterEditorWidgetState extends ConsumerState<ChapterEditorWidget> {
             wordTarget: req.wordTarget,
             extra: req.instruction,
           );
-    msgs = PromptTemplates.applyingExtra(r18Text, msgs);
-    msgs = PromptTemplates.applyingExtra(antiAI, msgs);
-    msgs = PromptTemplates.applyingExtra(provider.systemPromptExtra, msgs);
 
     if (!mounted) return;
     if (!await PromptGuard.authorize(
@@ -743,6 +742,7 @@ class _ChapterEditorWidgetState extends ConsumerState<ChapterEditorWidget> {
         config: GenerationConfig(
           temperature: provider.temperature,
           maxTokens: provider.maxTokens,
+          enablePromptCacheControl: true,
         ),
         cancelToken: _draftCancel,
       )) {
@@ -896,7 +896,10 @@ class _ChapterEditorWidgetState extends ConsumerState<ChapterEditorWidget> {
   }
 
   Future<void> _generateSummary() async {
-    final provider = _activeProvider;
+    final provider =
+        _sessionProvider ??
+        ref.read(fastToolProviderProvider) ??
+        ref.read(defaultProviderProvider);
     if (provider == null) {
       showZmSnackBar(context, '请先配置模型提供商', isError: true);
       return;
@@ -958,6 +961,9 @@ class _ChapterEditorWidgetState extends ConsumerState<ChapterEditorWidget> {
         config: GenerationConfig(
           temperature: 0.2,
           maxTokens: math.max(provider.maxTokens, 12288),
+          jsonMode: true,
+          reasoningEffort: ReasoningEffort.low,
+          enablePromptCacheControl: true,
         ),
         cancelToken: _summaryCancel,
       )) {
@@ -1059,6 +1065,7 @@ class _ChapterEditorWidgetState extends ConsumerState<ChapterEditorWidget> {
       bundle: bundle,
       draftContent: _textCtrl.text,
       sourceWindow: sourceWindow,
+      maxChars: provider.contextBudgetChars >= 80000 ? 48000 : 24000,
     );
     if (!mounted) return;
     await showModalBottomSheet<void>(

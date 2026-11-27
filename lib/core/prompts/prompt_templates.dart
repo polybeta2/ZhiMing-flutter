@@ -9,18 +9,20 @@ abstract final class PromptTemplates {
     required String renderedContext,
     required int wordTarget,
     String? staticContext,
+    List<String?> invariantExtras = const [],
     String? extra,
   }) {
-    var system = library.resolvedText(PromptID.continueWriting);
-    if (staticContext != null && staticContext.trim().isNotEmpty) {
-      system = '$system\n\n${staticContext.trim()}';
-    }
+    final system = _composeSystem(
+      library.resolvedText(PromptID.continueWriting),
+      invariantExtras: invariantExtras,
+      staticContext: staticContext,
+    );
     final suffix = (extra != null && extra.trim().isNotEmpty)
         ? '附加要求：${extra.trim()}'
         : '';
     final user = '$renderedContext\n\n请续写约 $wordTarget 字。$suffix';
     return [
-      LLMMessage(role: LLMRole.system, content: system),
+      LLMMessage(role: LLMRole.system, content: system, cacheControl: true),
       LLMMessage(role: LLMRole.user, content: user),
     ];
   }
@@ -30,18 +32,20 @@ abstract final class PromptTemplates {
     required String renderedContext,
     required int wordTarget,
     String? staticContext,
+    List<String?> invariantExtras = const [],
     String? extra,
   }) {
-    var system = library.resolvedText(PromptID.writing);
-    if (staticContext != null && staticContext.trim().isNotEmpty) {
-      system = '$system\n\n${staticContext.trim()}';
-    }
+    final system = _composeSystem(
+      library.resolvedText(PromptID.writing),
+      invariantExtras: invariantExtras,
+      staticContext: staticContext,
+    );
     final suffix = (extra != null && extra.trim().isNotEmpty)
         ? '附加要求：${extra.trim()}'
         : '';
     final user = '$renderedContext\n\n请撰写约 $wordTarget 字的完整章节。$suffix';
     return [
-      LLMMessage(role: LLMRole.system, content: system),
+      LLMMessage(role: LLMRole.system, content: system, cacheControl: true),
       LLMMessage(role: LLMRole.user, content: user),
     ];
   }
@@ -103,7 +107,7 @@ abstract final class PromptTemplates {
     }
     user.write('【$title】\n$content');
     return [
-      LLMMessage(role: LLMRole.system, content: system),
+      LLMMessage(role: LLMRole.system, content: system, cacheControl: true),
       LLMMessage(role: LLMRole.user, content: user.toString()),
     ];
   }
@@ -120,8 +124,30 @@ abstract final class PromptTemplates {
     }
     final user = '【待审章节：$chapterTitle】\n$draftContent';
     return [
-      LLMMessage(role: LLMRole.system, content: system),
+      LLMMessage(role: LLMRole.system, content: system, cacheControl: true),
       LLMMessage(role: LLMRole.user, content: user),
+    ];
+  }
+
+  /// 基于 [factReview] 首轮对话接续多轮定点勘误，保持 `[0]` 与 `[1]` 字节级一致以最大化复用 KV Cache。
+  static List<LLMMessage> factReviewFixFollowUp({
+    required List<LLMMessage> reviewMessages,
+    required String reviewAssistantReply,
+    required String issuesChecklist,
+  }) {
+    return [
+      ...reviewMessages,
+      LLMMessage(role: LLMRole.assistant, content: reviewAssistantReply),
+      LLMMessage(
+        role: LLMRole.user,
+        content: '''请严格依据上述已确认的【真相档案】与审稿问题，针对下列待修复项执行定点最小化勘误：
+$issuesChecklist
+要求：
+1. 只做定点最小化修改以消除上述设定/时间线/连续性/人设/逻辑矛盾；
+2. 未涉及矛盾的段落、文风、对话语气、节奏与篇幅必须最大限度原样保留，严禁借机重写整章；
+3. 修复后不得引入新的设定冲突或信息壁垒穿帮；
+4. 只输出修复后的完整章节正文，不要重复章节标题，不要解释或前后对照。''',
+      ),
     ];
   }
 
@@ -376,11 +402,27 @@ $draftContent''';
       result[0] = LLMMessage(
         role: LLMRole.system,
         content: '${result.first.content}\n\n$trimmed',
+        cacheControl: result.first.cacheControl,
       );
     } else {
       result.insert(0, LLMMessage(role: LLMRole.system, content: trimmed));
     }
     return result;
+  }
+
+  static String _composeSystem(
+    String baseSystem, {
+    List<String?> invariantExtras = const [],
+    String? staticContext,
+  }) {
+    final parts = <String>[
+      if (baseSystem.isNotEmpty) baseSystem,
+      for (final extra in invariantExtras)
+        if (extra != null && extra.trim().isNotEmpty) extra.trim(),
+      if (staticContext != null && staticContext.trim().isNotEmpty)
+        staticContext.trim(),
+    ];
+    return parts.join('\n\n');
   }
 
   static String _appendSupplement(String system, String? supplement) {

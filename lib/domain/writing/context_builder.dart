@@ -57,6 +57,15 @@ abstract final class ContextBuilder {
     WritingDirectorConfig? directorConfig,
     PromptLibraryState promptLibrary = const PromptLibraryState(),
   }) {
+    final isLong = budgetChars >= 80000;
+    final isMedium = budgetChars >= 40000;
+    final effectiveTail = isLong ? 5000 : (isMedium ? 2200 : tailLength);
+    final effectiveNeighborTail =
+        isLong ? 4000 : (isMedium ? 1800 : neighborTailLength);
+    final summaryLimit = isLong ? 15 : (isMedium ? 6 : 3);
+    final charLimit = isLong ? 24 : maxSceneCharacters;
+    final worldLimit = isLong ? 20 : maxWorldEntries;
+
     final staticRequired = <String>[];
     final dynamicRequired = <String>[];
     final staticOptional = <(String, String)>[];
@@ -64,6 +73,7 @@ abstract final class ContextBuilder {
     final dynamicOptional = <(String, String)>[];
     final truncated = <String>[];
 
+    // Static tier 1-3: 风格约束 -> 导演规则 -> 文风卡（全局静态，KV 缓存首段）
     final styleGuide = bundle.novel.styleGuide;
     if (styleGuide != null && styleGuide.trim().isNotEmpty) {
       staticRequired.add(
@@ -83,11 +93,58 @@ abstract final class ContextBuilder {
     if (styleCard != null && styleCard.isNotEmpty) {
       staticRequired.add(styleCard);
     }
-    if (sourceWindow != null && sourceWindow.isNotEmpty) {
-      staticRequired.add('【原作该阶段人物与事件】\n$sourceWindow');
+
+    // Lorebook 按需召回（按 sortOrder/id 稳定排序）
+    final lorebook = LorebookMatcher.selectForChapter(
+      chapter: chapter,
+      bundle: bundle,
+      maxCharacters: charLimit,
+      maxWorldEntries: worldLimit,
+    );
+
+    // Static tier 4-6: 世界观 -> 人物关系网（含明暗线） -> 角色固定档案（不含可变状态）
+    final world = lorebook.worldEntries
+        .map((w) => '- [${w.category}] ${w.name}：${w.content}')
+        .toList();
+    if (world.isNotEmpty) {
+      staticOptional.add(('世界观', '【世界观条目】\n${world.join('\n')}'));
     }
 
-    _appendPrevProseTail(chapter, bundle, dynamicRequired);
+    final relBlock = _renderRelationsBlock(
+      lorebook.relations,
+      bundle.characters,
+    );
+    if (relBlock != null) {
+      staticOptional.add(('人物关系网', relBlock));
+    }
+
+    final staticChars = lorebook.characters
+        .map(_renderStaticCharacter)
+        .toList();
+    if (staticChars.isNotEmpty) {
+      staticOptional.add(('角色状态', '【角色固定档案】\n${staticChars.join('\n\n')}'));
+    }
+
+    // Dynamic tier 1: 角色本章实时现状（可变字段全数下沉到 user 消息，保护 system KV 缓存）
+    final liveChars = lorebook.characters
+        .map(_renderLiveCharacterState)
+        .whereType<String>()
+        .toList();
+    final liveCharBlock = liveChars.isEmpty
+        ? null
+        : '【角色本章实时现状】\n${liveChars.join('\n')}';
+
+    // Dynamic tier 2-4: 原作窗口 -> 上一章末尾与定格快照 -> 本章细纲/场景卡/下章细纲
+    if (sourceWindow != null && sourceWindow.isNotEmpty) {
+      dynamicRequired.add('【原作该阶段人物与事件】\n$sourceWindow');
+    }
+
+    _appendPrevProseTail(
+      chapter,
+      bundle,
+      dynamicRequired,
+      tailLimit: effectiveNeighborTail,
+    );
 
     final detailedOutline = chapter.chapter.detailedOutline;
     if (detailedOutline != null && detailedOutline.trim().isNotEmpty) {
@@ -103,17 +160,28 @@ abstract final class ContextBuilder {
     }
     _appendNextOutlineHead(chapter, bundle, dynamicRequired);
 
+    // Dynamic tier 5-6: 前文摘要 / 关键事实 / 故事时间线
     final positions = bundle.globalIndexMap();
     final currentGlobal =
         positions[chapter.chapter.id] ?? (bundle.allChaptersInOrder.length + 1);
 
-    final prevSums = _summariesBefore(currentGlobal, bundle, positions, limit: 3);
+    final prevSums = _summariesBefore(
+      currentGlobal,
+      bundle,
+      positions,
+      limit: summaryLimit,
+    );
     if (prevSums.isNotEmpty) {
       final text = prevSums.map((e) => '第${e.$1}章：${e.$2}').join('\n');
       dynamicHigh.add(('前文摘要', '【前文摘要（最近 ${prevSums.length} 章）】\n$text'));
     }
 
-    final facts = _keyFactsBefore(currentGlobal, bundle, positions, limit: 3);
+    final facts = _keyFactsBefore(
+      currentGlobal,
+      bundle,
+      positions,
+      limit: summaryLimit,
+    );
     if (facts.isNotEmpty) {
       dynamicHigh.add(('关键事实', '【关键事实】\n${facts.map((f) => '- $f').join('\n')}'));
     }
@@ -126,30 +194,7 @@ abstract final class ContextBuilder {
       dynamicHigh.add(('故事时间线', timelineAnchor));
     }
 
-    final lorebook = LorebookMatcher.selectForChapter(
-      chapter: chapter,
-      bundle: bundle,
-    );
-    final sceneChars = lorebook.characters.map(_renderCharacter).toList();
-    if (sceneChars.isNotEmpty) {
-      staticOptional.add(('角色状态', '【角色当前状态】\n${sceneChars.join('\n\n')}'));
-    }
-
-    final relBlock = _renderRelationsBlock(
-      lorebook.relations,
-      bundle.characters,
-    );
-    if (relBlock != null) {
-      staticOptional.add(('人物关系网', relBlock));
-    }
-
-    final world = lorebook.worldEntries
-        .map((w) => '- [${w.category}] ${w.name}：${w.content}')
-        .toList();
-    if (world.isNotEmpty) {
-      staticOptional.add(('世界观', '【世界观条目】\n${world.join('\n')}'));
-    }
-
+    // Dynamic tier 7-8: 未回收伏笔提醒 / 场外暗线演化
     final volIdx = _volumeIndexOf(bundle, chapter.volumeId);
     final reminders = renderForeshadowReminders(
       bundle: bundle,
@@ -174,6 +219,15 @@ abstract final class ContextBuilder {
     }
 
     var used = [...staticRequired, ...dynamicRequired].join('\n\n').length;
+    String? acceptedLiveCharBlock;
+    if (liveCharBlock != null) {
+      if (used + liveCharBlock.length <= budgetChars) {
+        acceptedLiveCharBlock = liveCharBlock;
+        used += liveCharBlock.length;
+      } else {
+        truncated.add('角色实时现状');
+      }
+    }
     final acceptedStatic = <String>[];
     final acceptedDynamic = <String>[];
     for (final (name, text) in dynamicHigh) {
@@ -201,15 +255,21 @@ abstract final class ContextBuilder {
       }
     }
 
+    // Dynamic tier 9: 当前章正文末尾
     var tail = chapter.chapter.content;
-    if (tail.length > tailLength) {
-      tail = tail.substring(tail.length - tailLength);
+    if (tail.length > effectiveTail) {
+      tail = tail.substring(tail.length - effectiveTail);
     }
     final tailBlock =
         '【正文末尾】\n${tail.isEmpty ? '（本章尚无正文，请从开头写起）' : tail}';
 
     final staticParts = [...staticRequired, ...acceptedStatic];
-    final dynamicParts = [...dynamicRequired, ...acceptedDynamic, tailBlock];
+    final dynamicParts = [
+      ?acceptedLiveCharBlock,
+      ...dynamicRequired,
+      ...acceptedDynamic,
+      tailBlock,
+    ];
     final staticPrefix = staticParts.join('\n\n');
     final dynamicSuffix = dynamicParts.join('\n\n');
     final rendered = [
@@ -325,60 +385,104 @@ abstract final class ContextBuilder {
     required NovelBundle bundle,
     required int budgetChars,
   }) {
-    final high = <(String, String)>[];
-    final optional = <(String, String)>[];
+    final staticCandidates = <(String, String)>[];
+    final dynamicHigh = <(String, String)>[];
+    final dynamicOptional = <(String, String)>[];
     final positions = bundle.globalIndexMap();
     final anchorIndex = bundle.allChaptersInOrder.length + 1;
 
+    final world = bundle.worldEntries
+        .take(maxWorldEntries)
+        .map((w) => '- [${w.category}] ${w.name}：${w.content}')
+        .toList();
+    if (world.isNotEmpty) {
+      staticCandidates.add(('世界观', '【世界观条目】\n${world.join('\n')}'));
+    }
+    if (bundle.volumes.isNotEmpty) {
+      staticCandidates.add(('全书结构', '【全书结构】\n${_structureText(bundle)}'));
+    }
+    final sceneRelevantChars = bundle.characters
+        .where((c) => c.isSceneRelevant)
+        .take(maxSceneCharacters)
+        .toList();
+    final staticChars = sceneRelevantChars.map(_renderStaticCharacter).toList();
+    if (staticChars.isNotEmpty) {
+      staticCandidates.add(('角色固定档案', '【角色固定档案】\n${staticChars.join('\n\n')}'));
+    }
+    if (bundle.relations.isNotEmpty) {
+      final sortedRels = ([...bundle.relations]
+            ..sort((a, b) => a.id.compareTo(b.id)))
+          .take(20)
+          .toList();
+      final relBlock = _renderRelationsBlock(sortedRels, bundle.characters);
+      if (relBlock != null) {
+        staticCandidates.add(('人物关系网', relBlock));
+      }
+    }
+
     final prevSums = _summariesBefore(anchorIndex, bundle, positions, limit: 3);
     if (prevSums.isNotEmpty) {
-      high.add((
+      dynamicHigh.add((
         '前文摘要',
         '【前文摘要（最近 ${prevSums.length} 章）】\n${prevSums.map((e) => '第${e.$1}章：${e.$2}').join('\n')}',
       ));
     }
     final facts = _keyFactsBefore(anchorIndex, bundle, positions, limit: 3);
     if (facts.isNotEmpty) {
-      high.add(('关键事实', '【关键事实】\n${facts.map((f) => '- $f').join('\n')}'));
+      dynamicHigh.add(('关键事实', '【关键事实】\n${facts.map((f) => '- $f').join('\n')}'));
     }
     final prose = _recentProseTail(bundle, limit: 600);
     if (prose != null) {
-      high.add(('最近正文节选', '【最近正文节选】\n$prose'));
+      dynamicHigh.add(('最近正文节选', '【最近正文节选】\n$prose'));
     }
-
-    final sceneChars = bundle.characters
-        .where((c) => c.isSceneRelevant)
-        .take(maxSceneCharacters)
-        .map(_renderCharacter)
+    final liveChars = sceneRelevantChars
+        .map(_renderLiveCharacterState)
+        .whereType<String>()
         .toList();
-    if (sceneChars.isNotEmpty) {
-      optional.add(('角色状态', '【角色当前状态】\n${sceneChars.join('\n\n')}'));
-    }
-    final world = bundle.worldEntries
-        .take(maxWorldEntries)
-        .map((w) => '- [${w.category}] ${w.name}：${w.content}')
-        .toList();
-    if (world.isNotEmpty) {
-      optional.add(('世界观', '【世界观条目】\n${world.join('\n')}'));
-    }
-    if (bundle.volumes.isNotEmpty) {
-      optional.add(('全书结构', '【全书结构】\n${_structureText(bundle)}'));
+    if (liveChars.isNotEmpty) {
+      dynamicOptional.add(('角色状态', '【角色当前状态】\n${liveChars.join('\n')}'));
     }
 
     final truncated = <String>[];
     var used = 0;
-    final accepted = <String>[];
-    for (final (name, text) in [...high, ...optional]) {
+    final acceptedStatic = <String>[];
+    final acceptedDynamic = <String>[];
+    for (final (name, text) in dynamicHigh) {
       if (used + text.length <= budgetChars) {
-        accepted.add(text);
+        acceptedDynamic.add(text);
         used += text.length;
       } else {
         truncated.add(name);
       }
     }
+    for (final (name, text) in dynamicOptional) {
+      if (used + text.length <= budgetChars) {
+        acceptedDynamic.add(text);
+        used += text.length;
+      } else {
+        truncated.add(name);
+      }
+    }
+    for (final (name, text) in staticCandidates) {
+      if (used + text.length <= budgetChars) {
+        acceptedStatic.add(text);
+        used += text.length;
+      } else {
+        truncated.add(name);
+      }
+    }
+
+    final staticPrefix = acceptedStatic.join('\n\n');
+    final dynamicSuffix = acceptedDynamic.join('\n\n');
+    final rendered = [
+      if (staticPrefix.isNotEmpty) staticPrefix,
+      if (dynamicSuffix.isNotEmpty) dynamicSuffix,
+    ].join('\n\n');
     return BuiltContext(
-      rendered: accepted.join('\n\n'),
+      rendered: rendered,
       truncatedSections: truncated,
+      staticPrefix: staticPrefix,
+      dynamicSuffix: dynamicSuffix,
     );
   }
 
@@ -479,16 +583,17 @@ abstract final class ContextBuilder {
   static void _appendPrevProseTail(
     ChapterBundle chapter,
     NovelBundle bundle,
-    List<String> required,
-  ) {
+    List<String> required, {
+    int tailLimit = neighborTailLength,
+  }) {
     final all = bundle.allChaptersInOrder;
     final idx = all.indexWhere((c) => c.chapter.id == chapter.chapter.id);
     if (idx <= 0) return;
     final prev = all[idx - 1];
     final tailRaw = prev.chapter.content.trim();
     if (tailRaw.isNotEmpty) {
-      final tail = tailRaw.length > neighborTailLength
-          ? tailRaw.substring(tailRaw.length - neighborTailLength)
+      final tail = tailRaw.length > tailLimit
+          ? tailRaw.substring(tailRaw.length - tailLimit)
           : tailRaw;
       required.add('【上一章正文末尾】\n……$tail');
     }
@@ -600,6 +705,38 @@ abstract final class ContextBuilder {
       }
     }
     return out;
+  }
+
+  static String _renderStaticCharacter(db.Character c) {
+    final aliases = decodeStringList(c.aliasesJson);
+    final lines = <String>[
+      '◆ ${c.name}${aliases.isEmpty ? '' : '（${aliases.join('/')}）'}',
+    ];
+    final personality = c.personality?.trim();
+    if (personality != null && personality.isNotEmpty) {
+      lines.add('性格：$personality');
+    }
+    final background = c.background?.trim();
+    if (background != null && background.isNotEmpty) {
+      lines.add('背景：$background');
+    }
+    return lines.join('\n');
+  }
+
+  static String? _renderLiveCharacterState(db.Character c) {
+    final parts = <String>[];
+    final loc = c.currentLocation?.trim();
+    if (loc != null && loc.isNotEmpty) parts.add('位置：$loc');
+    final phys = c.physicalState?.trim();
+    if (phys != null && phys.isNotEmpty) parts.add('身体：$phys');
+    final ment = c.mentalState?.trim();
+    if (ment != null && ment.isNotEmpty) parts.add('心理：$ment');
+    final goal = c.currentGoal?.trim();
+    if (goal != null && goal.isNotEmpty) parts.add('目标：$goal');
+    final seen = c.lastSeenChapterTitle?.trim();
+    if (seen != null && seen.isNotEmpty) parts.add('最近出场：$seen');
+    if (parts.isEmpty) return null;
+    return '- ${c.name}：${parts.join('｜')}';
   }
 
   static String _renderCharacter(db.Character c) {

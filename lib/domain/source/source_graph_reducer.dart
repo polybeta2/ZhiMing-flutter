@@ -138,7 +138,7 @@ abstract final class SourceGraphReducer {
     }
 
     return [
-      const LLMMessage(role: LLMRole.system, content: sys),
+      const LLMMessage(role: LLMRole.system, content: sys, cacheControl: true),
       LLMMessage(role: LLMRole.user, content: buf.toString()),
     ];
   }
@@ -247,7 +247,18 @@ Schema:
     }
   ]
 }
-规则：必须覆盖输入中的全部 ${batch.length} 名角色，不得遗漏或篡改主名；每名角色 arc 保留 2-4 个关键节点；严禁编造原文未给出的设定。''';
+规则：必须覆盖输入中的全部角色，不得遗漏或篡改主名；每名角色 arc 保留 2-4 个关键节点；严禁编造原文未给出的设定。''';
+
+    final sysBuf = StringBuffer(sys);
+    if (isContinuation &&
+        tailContextSnippet != null &&
+        tailContextSnippet.trim().isNotEmpty) {
+      sysBuf
+        ..writeln()
+        ..writeln()
+        ..writeln('【截断处末尾正文参考（用于校准角色截至第 $upTo 章的精确现状）】')
+        ..write(_trim(tailContextSnippet.trim(), 5000));
+    }
 
     final buf = StringBuffer()
       ..writeln('《$title》（共 $upTo 章）本批建档角色（共 ${batch.length} 人）：\n');
@@ -280,16 +291,12 @@ Schema:
       buf.writeln();
     }
 
-    if (isContinuation &&
-        tailContextSnippet != null &&
-        tailContextSnippet.trim().isNotEmpty) {
-      buf
-        ..writeln('【截断处末尾正文参考（用于校准角色截至第 $upTo 章的精确现状）】')
-        ..writeln(_trim(tailContextSnippet.trim(), 2600));
-    }
-
     return [
-      LLMMessage(role: LLMRole.system, content: sys),
+      LLMMessage(
+        role: LLMRole.system,
+        content: sysBuf.toString(),
+        cacheControl: true,
+      ),
       LLMMessage(role: LLMRole.user, content: buf.toString()),
     ];
   }
@@ -377,7 +384,7 @@ Schema:
     }
 
     return [
-      const LLMMessage(role: LLMRole.system, content: sys),
+      const LLMMessage(role: LLMRole.system, content: sys, cacheControl: true),
       LLMMessage(role: LLMRole.user, content: buf.toString()),
     ];
   }
@@ -399,6 +406,7 @@ Schema:
   static List<LLMMessage> pass3WorldPrompt(
     AggregatedSourceGraph graph, {
     required String title,
+    int contextBudgetChars = 60000,
   }) {
     const sys = '''你是长篇小说世界观编辑。对全书抽取的世界观词条候选池去重合并，保留核心力量体系、地点、势力、规则与关键器物，并为每条配置 Lorebook 触发关键词。
 只输出合法 JSON 对象（不要代码块或说明）：
@@ -414,21 +422,25 @@ Schema:
 }
 规则：合并同义词条（如“星光之城”与“群星城”合一并将别名放进 keywords），精选 15-30 条高价值长期设定，过滤一次性杂物。''';
 
+    final isLargeContext = contextBudgetChars >= 100000;
+    final budget = isLargeContext ? 34000 : 14000;
+    final takeCount = isLargeContext ? 100 : 60;
+
     final ordered = graph.rawWorldEntries.values.toList()
       ..sort((a, b) => b.chapterNos.length.compareTo(a.chapterNos.length));
     final buf = StringBuffer()
       ..writeln('《$title》全书世界观候选池（共 ${ordered.length} 条，按跨章频次排序）：\n');
     var used = 0;
-    for (final w in ordered.take(60)) {
+    for (final w in ordered.take(takeCount)) {
       final line =
           '- [${w.category ?? "设定"}] ${w.name}（跨${w.chapterNos.length}章）：${_trim(w.contents.take(4).join("；"), 180)}';
-      if (used + line.length > 14000 && used > 0) break;
+      if (used + line.length > budget && used > 0) break;
       buf.writeln(line);
       used += line.length + 1;
     }
 
     return [
-      const LLMMessage(role: LLMRole.system, content: sys),
+      const LLMMessage(role: LLMRole.system, content: sys, cacheControl: true),
       LLMMessage(role: LLMRole.user, content: buf.toString()),
     ];
   }
@@ -451,6 +463,7 @@ Schema:
     AggregatedSourceGraph graph, {
     required String title,
     required bool isContinuation,
+    int contextBudgetChars = 60000,
   }) {
     final upTo = graph.totalChapters;
     final focus = isContinuation
@@ -481,13 +494,17 @@ Schema:
     final planted = graph.rawClues.where((c) => c.planted).toList();
     final resolved = graph.rawClues.where((c) => !c.planted).toList();
 
+    final isLargeContext = contextBudgetChars >= 100000;
+    final plantedBudget = isLargeContext ? 30000 : 13000;
+    final resBudget = isLargeContext ? 12000 : 5500;
+    final maxItems = isLargeContext ? 260 : 140;
+
     final buf = StringBuffer()
       ..writeln('《$title》（共 $upTo 章）全书伏笔证据池：\n')
       ..writeln('【一、新埋伏笔池（共 ${planted.length} 条）】');
 
     var used = 0;
-    const plantedBudget = 13000;
-    final selectedPlanted = _sampleSpread(planted, maxItems: 140);
+    final selectedPlanted = _sampleSpread(planted, maxItems: maxItems);
     for (final c in selectedPlanted) {
       final who = c.characters.isEmpty ? '' : '[${c.characters.take(3).join("、")}]';
       final line = '- [第${c.chapterNo}章]$who ${_trim(c.summary, 85)}';
@@ -498,7 +515,6 @@ Schema:
 
     buf.writeln('\n【二、回收/揭晓池（共 ${resolved.length} 条）】');
     var resUsed = 0;
-    const resBudget = 5500;
     for (final c in resolved) {
       final who = c.characters.isEmpty ? '' : '[${c.characters.take(3).join("、")}]';
       final hint = (c.targetHint != null && c.targetHint!.isNotEmpty)
@@ -511,7 +527,7 @@ Schema:
     }
 
     return [
-      LLMMessage(role: LLMRole.system, content: sys),
+      LLMMessage(role: LLMRole.system, content: sys, cacheControl: true),
       LLMMessage(role: LLMRole.user, content: buf.toString()),
     ];
   }
@@ -537,6 +553,7 @@ Schema:
     required String title,
     required List<CanonThread> reconciledThreads,
     required bool isContinuation,
+    int contextBudgetChars = 60000,
   }) {
     final upTo = graph.totalChapters;
     const sys = '''你是长篇小说剧情时间线编辑。根据全书按真实章号排列的事件流与已对账伏笔标题，梳理出清晰分阶段的剧情里程碑时间线与当前进行中的主线弧。
@@ -572,7 +589,14 @@ Schema:
       );
     }
 
-    final prioritized = _selectTimelineEvents(graph.rawEvents, maxBudget: 17000);
+    final isLargeContext = contextBudgetChars >= 100000;
+    final maxBudget = isLargeContext ? 38000 : 17000;
+    final maxOtherItems = isLargeContext ? 220 : 120;
+    final prioritized = _selectTimelineEvents(
+      graph.rawEvents,
+      maxBudget: maxBudget,
+      maxOtherItems: maxOtherItems,
+    );
     buf.writeln('【全书按章序事件流（精选 ${prioritized.length}/${graph.rawEvents.length} 条）】');
     for (final ev in prioritized) {
       final t = (ev.inWorldTime != null && ev.inWorldTime!.isNotEmpty)
@@ -585,7 +609,7 @@ Schema:
     }
 
     return [
-      const LLMMessage(role: LLMRole.system, content: sys),
+      const LLMMessage(role: LLMRole.system, content: sys, cacheControl: true),
       LLMMessage(role: LLMRole.user, content: buf.toString()),
     ];
   }
@@ -633,6 +657,7 @@ Schema:
   static List<IndexedRawEvent> _selectTimelineEvents(
     List<IndexedRawEvent> events, {
     required int maxBudget,
+    int maxOtherItems = 120,
   }) {
     if (events.isEmpty) return const [];
     final major = events.where((e) => e.importance == 'major').toList();
@@ -647,7 +672,7 @@ Schema:
       used += cost;
     }
     if (used < maxBudget && others.isNotEmpty) {
-      final spread = _sampleSpread(others, maxItems: 120);
+      final spread = _sampleSpread(others, maxItems: maxOtherItems);
       for (final e in spread) {
         final cost = e.summary.length + 32;
         if (used + cost > maxBudget) break;

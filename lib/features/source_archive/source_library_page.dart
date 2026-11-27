@@ -55,8 +55,8 @@ class _SourceLibraryPageState extends ConsumerState<SourceLibraryPage> {
     final titleCtrl = TextEditingController(text: defaultTitle);
     var useBatchCopy = false;
     var mode = ScanMode.evidence;
-    var batchSize = 3;
-    var concurrency = 3;
+    var batchSize = 10;
+    var concurrency = 6;
 
     final start = await showDialog<bool>(
       context: context,
@@ -113,14 +113,8 @@ class _SourceLibraryPageState extends ConsumerState<SourceLibraryPage> {
                       Expanded(
                         child: DropdownButtonFormField<int>(
                           initialValue: batchSize,
-                          decoration: const InputDecoration(labelText: '每批块数'),
-                          items: List.generate(
-                            10,
-                            (i) => DropdownMenuItem(
-                              value: i + 1,
-                              child: Text(i == 0 ? '逐块 (1)' : '${i + 1} 块'),
-                            ),
-                          ),
+                          decoration: const InputDecoration(labelText: '每批章/块数'),
+                          items: buildScanBatchSizeItems(batchSize),
                           onChanged: (v) {
                             if (v != null) setLocal(() => batchSize = v);
                           },
@@ -133,14 +127,9 @@ class _SourceLibraryPageState extends ConsumerState<SourceLibraryPage> {
                     DropdownButtonFormField<int>(
                       initialValue: concurrency,
                       decoration: const InputDecoration(
-                        labelText: '并发扫描通道数（提速用）',
+                        labelText: '并发扫描通道数',
                       ),
-                      items: const [
-                        DropdownMenuItem(value: 1, child: Text('1 路串行（最稳）')),
-                        DropdownMenuItem(value: 2, child: Text('2 路并发')),
-                        DropdownMenuItem(value: 3, child: Text('3 路并发（推荐）')),
-                        DropdownMenuItem(value: 4, child: Text('4 路并发（极速）')),
-                      ],
+                      items: buildScanConcurrencyItems(concurrency),
                       onChanged: (v) {
                         if (v != null) setLocal(() => concurrency = v);
                       },
@@ -193,6 +182,7 @@ class _SourceLibraryPageState extends ConsumerState<SourceLibraryPage> {
         concurrency: concurrency,
         isContinuation: false,
         initialProvider: provider,
+        fastProvider: ref.read(fastToolProviderProvider),
       );
       if (mounted && profile != null) {
         showZmSnackBar(context, '已生成原作档案《${profile.title}》');
@@ -229,9 +219,11 @@ class _SourceLibraryPageState extends ConsumerState<SourceLibraryPage> {
       sourceText: text,
       title: task.title,
       mode: ScanMode.fromRaw(task.mode),
-      batchSize: task.batchSize,
+      batchSize: task.batchSize.clamp(1, 20),
+      concurrency: 6,
       isContinuation: task.isContinuation,
       initialProvider: provider,
+      fastProvider: ref.read(fastToolProviderProvider),
       presetProfileId: task.profileId,
     );
   }

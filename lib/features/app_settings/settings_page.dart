@@ -235,9 +235,121 @@ class SettingsPage extends ConsumerWidget {
     );
   }
 
+  Future<void> _openFastToolModelDialog(
+    BuildContext context,
+    WidgetRef ref,
+  ) async {
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => Consumer(
+        builder: (ctx, dialogRef, _) {
+          final providers =
+              dialogRef.watch(providersStreamProvider).valueOrNull ?? const [];
+          final defaultProvider = dialogRef.watch(defaultProviderProvider);
+          final rawSelectedId = dialogRef.watch(fastToolProviderIdProvider);
+          final selectedId =
+              rawSelectedId != null &&
+                  providers.any((p) => p.id == rawSelectedId)
+              ? rawSelectedId
+              : null;
+          final cs = Theme.of(ctx).colorScheme;
+          return AlertDialog(
+            title: const Text('选择极速工具模型'),
+            content: SizedBox(
+              width: double.maxFinite,
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      '用于精扫、审稿、活体建档与体检等高频工具任务；未单独指定时跟随默认主力模型。',
+                      style: Theme.of(ctx).textTheme.bodySmall?.copyWith(
+                        color: cs.onSurfaceVariant,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      selected: selectedId == null,
+                      leading: Icon(
+                        selectedId == null
+                            ? Icons.radio_button_checked_rounded
+                            : Icons.radio_button_unchecked_rounded,
+                        color: selectedId == null
+                            ? cs.primary
+                            : cs.onSurfaceVariant,
+                      ),
+                      title: const Text(
+                        '跟随默认主力模型',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      subtitle: defaultProvider != null
+                          ? Text(
+                              '${defaultProvider.name} · ${defaultProvider.modelName}',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            )
+                          : null,
+                      onTap: () async {
+                        await dialogRef
+                            .read(fastToolProviderIdProvider.notifier)
+                            .setProviderId(null);
+                        if (ctx.mounted) Navigator.of(ctx).pop();
+                      },
+                    ),
+                    for (final p in providers)
+                      ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        selected: selectedId == p.id,
+                        leading: Icon(
+                          selectedId == p.id
+                              ? Icons.radio_button_checked_rounded
+                              : Icons.radio_button_unchecked_rounded,
+                          color: selectedId == p.id
+                              ? cs.primary
+                              : cs.onSurfaceVariant,
+                        ),
+                        title: Text(
+                          '${p.name} · ${p.modelName}',
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        onTap: () async {
+                          await dialogRef
+                              .read(fastToolProviderIdProvider.notifier)
+                              .setProviderId(p.id);
+                          if (ctx.mounted) Navigator.of(ctx).pop();
+                        },
+                      ),
+                  ],
+                ),
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(ctx).pop(),
+                child: const Text('取消'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final defaultProvider = ref.watch(defaultProviderProvider);
+    final providers =
+        ref.watch(providersStreamProvider).valueOrNull ?? const [];
+    final fastToolProviderId = ref.watch(fastToolProviderIdProvider);
+    final fastProvider = ref.watch(fastToolProviderProvider);
+    final hasCustomFastTool =
+        fastToolProviderId != null &&
+        providers.any((p) => p.id == fastToolProviderId) &&
+        fastProvider != null;
     final appearance = ref.watch(appearanceProvider);
     final keepAliveMode = ref.watch(backgroundKeepAliveProvider);
     final cs = Theme.of(context).colorScheme;
@@ -270,6 +382,29 @@ class SettingsPage extends ConsumerWidget {
                         ),
                   trailing: const Icon(Icons.chevron_right),
                   onTap: () => context.push('/settings/providers'),
+                ),
+              ),
+              const SizedBox(height: AppTokens.s2),
+              Card(
+                child: ListTile(
+                  leading: const ZmSettingsIcon(
+                    icon: Icons.flash_on_rounded,
+                    tint: Colors.amber,
+                  ),
+                  title: const Text(
+                    '极速工具模型（可选）',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  subtitle: Text(
+                    hasCustomFastTool
+                        ? '当前：${fastProvider.name} · ${fastProvider.modelName}'
+                        : '跟随默认主力模型（用于精扫、审稿、活体建档与体检）',
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () => _openFastToolModelDialog(context, ref),
                 ),
               ),
               const SizedBox(height: AppTokens.s5),

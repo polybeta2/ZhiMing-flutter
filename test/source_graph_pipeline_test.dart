@@ -185,6 +185,108 @@ void main() {
       expect(merged[0]!.characters.length, 2);
       expect(merged[0]!.events.length, 2);
     });
+
+    test('modernFullMaxChunk keeps 10k chapter in single chunk while default splits 5k into 2 parts', () {
+      final body10k = '钟声响起，迷雾涌动。' * 1000; // 10,000 chars
+      final book10k = '第1章 长章\n$body10k';
+      final modernChunks = SourceScanChunker.chunks(
+        book10k,
+        mode: ScanMode.full,
+        maxChunkChars: SourceScanChunker.modernFullMaxChunk,
+      );
+      expect(modernChunks.length, 1);
+      expect(modernChunks.single.kind, 'full');
+      expect(modernChunks.single.partCount, 1);
+
+      final body5k = '钟声响起，迷雾涌动。' * 500; // 5,000 chars
+      final book5k = '第1章 短长章\n$body5k';
+      final defaultChunks = SourceScanChunker.chunks(
+        book5k,
+        mode: ScanMode.full,
+      );
+      expect(defaultChunks.length, 2);
+      expect(defaultChunks[0].partCount, 2);
+      expect(defaultChunks[1].partCount, 2);
+    });
+
+    test('packByCharBudget respects targetBatchChars, maxChunksPerBatch and doneIndexes gaps', () {
+      final chunks = [
+        for (var i = 0; i < 6; i++)
+          SourceScanChunk(
+            chapterIndex: i,
+            chapterTitle: '第${i + 1}章',
+            kind: 'full',
+            text: '甲' * (i == 4 ? 30000 : 10000),
+          ),
+      ];
+
+      // index 1 is done -> breaks [0] before 1, skips 1, then packs [2, 3] (20k <= 25k),
+      // breaks before [4] (20k + 30k > 25k), [4] alone (30k > 25k still allowed), then [5]
+      final packedWithGap = SourceScanChunker.packByCharBudget(
+        chunks,
+        {1},
+        targetBatchChars: 25000,
+        maxChunksPerBatch: 12,
+      );
+      expect(packedWithGap.map((g) => g.map((e) => e.pos).toList()).toList(), [
+        [0],
+        [2, 3],
+        [4],
+        [5],
+      ]);
+
+      // maxChunksPerBatch cap
+      final packedByCount = SourceScanChunker.packByCharBudget(
+        chunks.sublist(0, 4),
+        const {},
+        targetBatchChars: 100000,
+        maxChunksPerBatch: 2,
+      );
+      expect(packedByCount.map((g) => g.map((e) => e.pos).toList()).toList(), [
+        [0, 1],
+        [2, 3],
+      ]);
+    });
+
+    test('buildCachedBatchMessages produces byte-identical cached system across batches', () {
+      final batch1 = [
+        const BatchChapterInput(index: 1, title: '第1章 雾起', body: '正文一'),
+        const BatchChapterInput(index: 2, title: '第2章 钟鸣', body: '正文二'),
+      ];
+      final batch2 = [
+        const BatchChapterInput(index: 3, title: '第3章 入城', body: '正文三'),
+        const BatchChapterInput(index: 4, title: '第4章 交易', body: '正文四'),
+        const BatchChapterInput(index: 5, title: '第5章 暗潮', body: '正文五'),
+      ];
+      const prior = ['莫烬', '罗娜', '爱丽丝'];
+
+      final msgs1 = SourceBatchHelper.buildCachedBatchMessages(
+        title: '诡异降临',
+        chapters: batch1,
+        knownCharacters: prior,
+      );
+      final msgs2 = SourceBatchHelper.buildCachedBatchMessages(
+        title: '诡异降临',
+        chapters: batch2,
+        knownCharacters: prior,
+      );
+
+      expect(msgs1.length, 2);
+      expect(msgs2.length, 2);
+      expect(msgs1.first.role, LLMRole.system);
+      expect(msgs1.first.cacheControl, isTrue);
+      expect(msgs2.first.cacheControl, isTrue);
+      expect(msgs1.first.content, msgs2.first.content);
+      expect(msgs1.first.content, contains('全书高频先验人物名录'));
+      expect(msgs1.first.content, contains('莫烬、罗娜、爱丽丝'));
+      expect(msgs1.first.content, isNot(contains('第 1-2 章')));
+      expect(msgs1.first.content, isNot(contains('第 3-5 章')));
+      expect(msgs1.first.content, isNot(contains('共 2 段')));
+      expect(msgs1.first.content, isNot(contains('共 3 段')));
+      expect(msgs1.last.role, LLMRole.user);
+      expect(msgs1.last.content, contains('第 1-2 章的正文（共 2 段）'));
+      expect(msgs2.last.content, contains('第 3-5 章的正文（共 3 段）'));
+    });
   });
 
   group('NovelLocalIndexer noise filtering', () {
@@ -446,7 +548,376 @@ void main() {
       expect(profile.timeline.first.chapterStart, 1);
       ctrl.dispose();
     });
+
+    test('Direct-Read Fast Lane completes in 1 call on valid JSON for <= 80k book', () async {
+      TestWidgetsFlutterBinding.ensureInitialized();
+      final db = AppDatabase(NativeDatabase.memory());
+      final tmp = await Directory.systemTemp.createTemp('zm_direct_read_ok_');
+      addTearDown(() async {
+        await db.close();
+        if (await tmp.exists()) await tmp.delete(recursive: true);
+      });
+
+      final stub = _DirectReadStubClient(failFirstCall: false);
+      final ctrl = SourceScanController(
+        db: db,
+        blobs: BlobStore(baseDirOverride: tmp),
+        client: stub,
+        provider: ProviderRecord(
+          id: 'prov-direct',
+          name: 'Strong',
+          baseUrl: 'https://example.com/v1',
+          apiKeyId: 'k1',
+          modelName: 'strong-model',
+          temperature: 0.2,
+          maxTokens: 16384,
+          contextBudgetChars: 120000,
+          isDefault: true,
+          createdAt: DateTime(2026),
+        ),
+      );
+
+      final book = '''
+第1章 雾起
+莫烬说道：“别碰那块怀表。”罗娜笑道：“我已经拿到了。”
+
+第2章 入城
+莫烬问道：“星光之城还安全吗？”
+
+第3章 交锋
+莫烬说道：“记住我们的约定。”罗娜点了点头。
+''';
+
+      await ctrl.start(
+        sourceText: book,
+        title: '短篇测试',
+        mode: ScanMode.full,
+        isContinuation: true,
+      );
+
+      expect(ctrl.phase, ScanPhase.done, reason: ctrl.errorMessage);
+      expect(stub.calls, 1);
+      expect(stub.lastConfig?.jsonMode, isTrue);
+      expect(stub.lastConfig?.reasoningEffort, ReasoningEffort.medium);
+      expect(stub.lastConfig?.enablePromptCacheControl, isTrue);
+      expect(stub.lastMessages.first.cacheControl, isTrue);
+
+      final profile = ctrl.resultProfile!;
+      expect(profile.meta.totalChapters, 3);
+      expect(profile.continuationFromChapter, 3);
+      expect(profile.camps.single.name, '星光之城');
+      expect(profile.characters.map((c) => c.name), containsAll(['莫烬', '罗娜']));
+      final moJin = profile.characters.firstWhere((c) => c.name == '莫烬');
+      expect(moJin.voiceSamples, isNotEmpty);
+      expect(profile.relations.single.from, '莫烬');
+      expect(profile.timeline.single.chapterStart, 1);
+      expect(profile.worldbuilding.single.name, '星光之城');
+      expect(profile.openThreads.single.title, '银色怀表');
+      expect(profile.activeArcs, ['守卫星光之城']);
+      ctrl.dispose();
+    });
+
+    test('Direct-Read Fast Lane falls back cleanly to Map-Reduce on parse error', () async {
+      TestWidgetsFlutterBinding.ensureInitialized();
+      final db = AppDatabase(NativeDatabase.memory());
+      final tmp = await Directory.systemTemp.createTemp('zm_direct_read_fb_');
+      addTearDown(() async {
+        await db.close();
+        if (await tmp.exists()) await tmp.delete(recursive: true);
+      });
+
+      final stub = _DirectReadStubClient(failFirstCall: true);
+      final ctrl = SourceScanController(
+        db: db,
+        blobs: BlobStore(baseDirOverride: tmp),
+        client: stub,
+        provider: ProviderRecord(
+          id: 'prov-fb',
+          name: 'Test',
+          baseUrl: 'https://example.com/v1',
+          apiKeyId: 'k1',
+          modelName: 'test-model',
+          temperature: 0.2,
+          maxTokens: 16384,
+          contextBudgetChars: 60000,
+          isDefault: true,
+          createdAt: DateTime(2026),
+        ),
+      );
+
+      final book = List.generate(
+        6,
+        (i) => '第${i + 1}章 章节${i + 1}\n莫烬与罗娜在群星之城探索银色怀表的秘密。',
+      ).join('\n\n');
+
+      await ctrl.start(
+        sourceText: book,
+        title: '回退长篇',
+        mode: ScanMode.full,
+        batchSize: 3,
+        concurrency: 2,
+        isContinuation: true,
+      );
+
+      expect(ctrl.phase, ScanPhase.done, reason: ctrl.errorMessage);
+      expect(stub.calls, greaterThan(1));
+      final profile = ctrl.resultProfile!;
+      expect(profile.meta.totalChapters, 6);
+      expect(profile.relations, isNotEmpty);
+      expect(profile.openThreads.length, 2);
+      expect(profile.timeline, isNotEmpty);
+      ctrl.dispose();
+    });
+
+    test('AIMD helper halves on rate limit and steps up every 6 clean completions', () {
+      expect(
+        SourceScanController.nextAimdLimit(
+          currentLimit: 6,
+          maxConcurrency: 8,
+          consecutiveOk: 3,
+          isRateLimited: true,
+        ),
+        3,
+      );
+      expect(
+        SourceScanController.nextAimdLimit(
+          currentLimit: 1,
+          maxConcurrency: 8,
+          consecutiveOk: 0,
+          isRateLimited: true,
+        ),
+        1,
+      );
+      expect(
+        SourceScanController.nextAimdLimit(
+          currentLimit: 3,
+          maxConcurrency: 8,
+          consecutiveOk: 4,
+          isRateLimited: false,
+        ),
+        3,
+      );
+      expect(
+        SourceScanController.nextAimdLimit(
+          currentLimit: 3,
+          maxConcurrency: 8,
+          consecutiveOk: 5,
+          isRateLimited: false,
+        ),
+        4,
+      );
+      expect(
+        SourceScanController.nextAimdLimit(
+          currentLimit: 8,
+          maxConcurrency: 8,
+          consecutiveOk: 5,
+          isRateLimited: false,
+        ),
+        8,
+      );
+    });
+
+    test('SourceGraphReducer pass2 shares cached system and pass3B/4A/4B scale with budget', () {
+      final records = <({int chapterNo, MicroSummary summary})>[
+        for (var i = 1; i <= 150; i++)
+          (
+            chapterNo: i,
+            summary: MicroSummary(
+              chapterNo: i,
+              characters: const [MicroCharacter(name: '莫烬', traits: '冷静')],
+              worldbuilding: [
+                MicroWorld(
+                  name: '词条$i',
+                  category: '规则',
+                  content: 'X' * 220,
+                ),
+              ],
+              foreshadowing: [
+                MicroForeshadow(
+                  summary: '伏笔$i：${'线' * 70}',
+                  planted: true,
+                  characters: const ['莫烬'],
+                ),
+              ],
+              events: [
+                MicroEvent(
+                  summary: '事件$i：${'因' * 60}',
+                  participants: const ['莫烬'],
+                  importance: 'normal',
+                ),
+              ],
+            ),
+          ),
+      ];
+      final graph = SourceGraphAggregator.build(records, totalChapters: 150);
+
+      final p2a = SourceGraphReducer.pass2CharBatchPrompt(
+        title: '测试',
+        batch: const [CanonSkeleton(name: '莫烬')],
+        normalized: graph,
+        isContinuation: true,
+        tailContextSnippet: '末尾正文参考片段',
+      );
+      final p2b = SourceGraphReducer.pass2CharBatchPrompt(
+        title: '测试',
+        batch: const [CanonSkeleton(name: '莫烬'), CanonSkeleton(name: '罗娜')],
+        normalized: graph,
+        isContinuation: true,
+        tailContextSnippet: '末尾正文参考片段',
+      );
+      expect(p2a.first.cacheControl, isTrue);
+      expect(p2a.first.content, p2b.first.content);
+      expect(p2a.first.content, contains('末尾正文参考片段'));
+      expect(p2a.last.content, isNot(contains('末尾正文参考片段')));
+
+      final wSmall = SourceGraphReducer.pass3WorldPrompt(
+        graph,
+        title: '测试',
+        contextBudgetChars: 60000,
+      );
+      final wLarge = SourceGraphReducer.pass3WorldPrompt(
+        graph,
+        title: '测试',
+        contextBudgetChars: 120000,
+      );
+      expect(wSmall.first.cacheControl, isTrue);
+      expect(wLarge.last.content.length, greaterThan(wSmall.last.content.length));
+
+      final cSmall = SourceGraphReducer.pass4CluesPrompt(
+        graph,
+        title: '测试',
+        isContinuation: true,
+        contextBudgetChars: 60000,
+      );
+      final cLarge = SourceGraphReducer.pass4CluesPrompt(
+        graph,
+        title: '测试',
+        isContinuation: true,
+        contextBudgetChars: 120000,
+      );
+      expect(cSmall.first.cacheControl, isTrue);
+      expect(cLarge.last.content.length, greaterThan(cSmall.last.content.length));
+
+      final tSmall = SourceGraphReducer.pass4TimelinePrompt(
+        graph,
+        title: '测试',
+        reconciledThreads: const [],
+        isContinuation: true,
+        contextBudgetChars: 60000,
+      );
+      final tLarge = SourceGraphReducer.pass4TimelinePrompt(
+        graph,
+        title: '测试',
+        reconciledThreads: const [],
+        isContinuation: true,
+        contextBudgetChars: 120000,
+      );
+      expect(tSmall.first.cacheControl, isTrue);
+      expect(tLarge.last.content.length, greaterThan(tSmall.last.content.length));
+    });
   });
+}
+
+class _DirectReadStubClient extends _GraphScanStubClient {
+  _DirectReadStubClient({required this.failFirstCall});
+
+  final bool failFirstCall;
+  int calls = 0;
+  GenerationConfig? lastConfig;
+  List<LLMMessage> lastMessages = const [];
+
+  @override
+  Stream<StreamEvent> streamChat(
+    List<LLMMessage> messages, {
+    required GenerationConfig config,
+    CancelToken? cancelToken,
+  }) async* {
+    calls += 1;
+    lastConfig = config;
+    lastMessages = messages;
+    if (calls == 1) {
+      if (failFirstCall) {
+        yield const ContentDelta('invalid-json-not-object');
+        return;
+      }
+      yield ContentDelta(
+        jsonEncode({
+          'title': '短篇测试',
+          'camps': [
+            {'name': '星光之城', 'stance': '中立', 'brief': '庇护所'},
+          ],
+          'characters': [
+            {
+              'name': '莫烬',
+              'aliases': ['行商'],
+              'oneLine': '冷静行商',
+              'role': '主角',
+              'camp': '独立',
+              'stance': '主角方',
+              'importance': 'major',
+              'currentState': '守护约定',
+              'voiceSamples': [],
+            },
+            {
+              'name': '罗娜',
+              'aliases': [],
+              'oneLine': '星光之城主',
+              'role': '核心配角',
+              'camp': '星光之城',
+              'stance': '主角方',
+              'importance': 'major',
+              'currentState': '与莫烬同行',
+            },
+          ],
+          'relations': [
+            {
+              'from': '莫烬',
+              'to': '罗娜',
+              'relationType': '盟友',
+              'label': '约定同伴',
+              'strength': 4,
+              'line': '明线',
+              'firstChapter': 1,
+              'lastChapter': 3,
+            },
+          ],
+          'timeline': [
+            {
+              'id': 'tl_1',
+              'phase': '开篇',
+              'chapterRange': '第1-3章',
+              'chapterStart': 1,
+              'chapterEnd': 3,
+              'summary': '莫烬与罗娜在星光之城达成约定',
+              'participants': ['莫烬', '罗娜'],
+              'importance': 'major',
+            },
+          ],
+          'worldbuilding': [
+            {
+              'category': '地理',
+              'name': '星光之城',
+              'content': '安全庇护所',
+              'keywords': ['星光之城'],
+            },
+          ],
+          'openThreads': [
+            {
+              'title': '银色怀表',
+              'detail': '不能触碰的怀表来历不明',
+              'status': 'open',
+              'plantedChapter': 1,
+              'involvedCharacters': ['莫烬', '罗娜'],
+            },
+          ],
+          'activeArcs': ['守卫星光之城'],
+        }),
+      );
+      yield const UsageReport(promptTokens: 500, completionTokens: 200);
+      return;
+    }
+    yield* super.streamChat(messages, config: config, cancelToken: cancelToken);
+  }
 }
 
 class _GraphScanStubClient implements LLMClient {

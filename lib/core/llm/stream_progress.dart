@@ -15,6 +15,7 @@ class StreamProgressState {
     this.promptTokens = 0,
     this.completionTokens = 0,
     this.cachedTokens = 0,
+    this.lastUsage,
   });
 
   final StreamStage stage;
@@ -24,6 +25,7 @@ class StreamProgressState {
   final int promptTokens;
   final int completionTokens;
   final int cachedTokens;
+  final UsageReport? lastUsage;
 
   bool get isActive => stage != StreamStage.idle;
 
@@ -37,7 +39,7 @@ class StreamProgressState {
         : '';
     return switch (stage) {
       StreamStage.idle => '',
-      StreamStage.waitingFirstToken => '正在等待首 Token · $sec',
+      StreamStage.waitingFirstToken => '正在等待首 Token · $sec$cacheTag',
       StreamStage.thinking => '深度思考 $reasoningChars 字 · $sec$cacheTag',
       StreamStage.outputting => '正在输出 $contentChars 字 · $sec$cacheTag',
     };
@@ -51,6 +53,8 @@ class StreamProgressState {
     int? promptTokens,
     int? completionTokens,
     int? cachedTokens,
+    UsageReport? lastUsage,
+    bool clearUsage = false,
   }) {
     return StreamProgressState(
       stage: stage ?? this.stage,
@@ -60,6 +64,7 @@ class StreamProgressState {
       promptTokens: promptTokens ?? this.promptTokens,
       completionTokens: completionTokens ?? this.completionTokens,
       cachedTokens: cachedTokens ?? this.cachedTokens,
+      lastUsage: clearUsage ? null : (lastUsage ?? this.lastUsage),
     );
   }
 }
@@ -70,8 +75,13 @@ class StreamProgressTracker extends ValueNotifier<StreamProgressState> {
 
   DateTime _stageStart = DateTime.now();
   Timer? _timer;
+  UsageReport? _lastCompletedUsage;
+
+  /// 最近一次流式请求已上报的用量快照（在 `finish()` 后保留，直到下一次 `begin()` 清除）
+  UsageReport? get lastCompletedUsage => _lastCompletedUsage;
 
   void begin() {
+    _lastCompletedUsage = null;
     _enter(StreamStage.waitingFirstToken, resetCounters: true);
   }
 
@@ -87,15 +97,37 @@ class StreamProgressTracker extends ValueNotifier<StreamProgressState> {
         final nextCount = value.contentChars + text.length;
         _enter(StreamStage.outputting);
         value = value.copyWith(contentChars: nextCount);
-      case UsageReport(
-        :final promptTokens,
-        :final completionTokens,
-        :final cachedTokens,
-      ):
+      case UsageReport():
+        final mergedPrompt = event.promptTokens > 0
+            ? event.promptTokens
+            : value.promptTokens;
+        final mergedCompletion = event.completionTokens > 0
+            ? event.completionTokens
+            : value.completionTokens;
+        final mergedCached = event.cachedTokens > 0
+            ? event.cachedTokens
+            : (event.promptTokens > 0 ? event.cachedTokens : value.cachedTokens);
+        final mergedCacheCreation = event.cacheCreationTokens > 0
+            ? event.cacheCreationTokens
+            : (event.promptTokens > 0
+                  ? event.cacheCreationTokens
+                  : (value.lastUsage?.cacheCreationTokens ?? 0));
+        final mergedReasoning = event.reasoningTokens > 0
+            ? event.reasoningTokens
+            : (value.lastUsage?.reasoningTokens ?? 0);
+        final mergedUsage = UsageReport(
+          promptTokens: mergedPrompt,
+          completionTokens: mergedCompletion,
+          cachedTokens: mergedCached,
+          reasoningTokens: mergedReasoning,
+          cacheCreationTokens: mergedCacheCreation,
+        );
+        _lastCompletedUsage = mergedUsage;
         value = value.copyWith(
-          promptTokens: promptTokens,
-          completionTokens: completionTokens,
-          cachedTokens: cachedTokens,
+          promptTokens: mergedPrompt,
+          completionTokens: mergedCompletion,
+          cachedTokens: mergedCached,
+          lastUsage: mergedUsage,
         );
     }
   }
@@ -103,7 +135,7 @@ class StreamProgressTracker extends ValueNotifier<StreamProgressState> {
   void finish() {
     _timer?.cancel();
     _timer = null;
-    value = const StreamProgressState();
+    value = StreamProgressState(lastUsage: _lastCompletedUsage);
   }
 
   void _enter(StreamStage nextStage, {bool resetCounters = false}) {

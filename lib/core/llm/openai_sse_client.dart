@@ -61,6 +61,33 @@ class OpenAiSseClient implements LLMClient {
     return uri;
   }
 
+  bool get _supportsExplicitCacheControl =>
+      model.toLowerCase().contains('claude') ||
+      _baseUrl.toLowerCase().contains('anthropic');
+
+  /// 构造请求体：支持 JSON Mode、reasoning_effort 与 Anthropic 显式 cache_control 断点
+  static Map<String, dynamic> buildRequestBody({
+    required String model,
+    required List<LLMMessage> messages,
+    required GenerationConfig config,
+    bool useExplicitCacheControl = false,
+  }) {
+    return <String, dynamic>{
+      'model': model,
+      'stream': true,
+      'temperature': config.temperature,
+      'max_tokens': config.maxTokens,
+      'messages': [
+        for (final m in messages)
+          m.toJson(withCacheControl: useExplicitCacheControl),
+      ],
+      if (config.includeUsage) 'stream_options': {'include_usage': true},
+      if (config.jsonMode) 'response_format': {'type': 'json_object'},
+      if (config.reasoningEffort != null)
+        'reasoning_effort': config.reasoningEffort!.wireValue,
+    };
+  }
+
   @override
   Stream<StreamEvent> streamChat(
     List<LLMMessage> messages, {
@@ -68,20 +95,35 @@ class OpenAiSseClient implements LLMClient {
     CancelToken? cancelToken,
   }) async* {
     final uri = _buildEndpoint('chat/completions');
-    final body = <String, dynamic>{
-      'model': model,
-      'stream': true,
-      'temperature': config.temperature,
-      'max_tokens': config.maxTokens,
-      'messages': [for (final m in messages) m.toJson()],
-      if (config.includeUsage) 'stream_options': {'include_usage': true},
-    };
+    var allowOptionalExtensions = true;
+    final hasOptionalExtensions =
+        config.jsonMode ||
+        config.reasoningEffort != null ||
+        (config.enablePromptCacheControl && _supportsExplicitCacheControl);
 
     const maxPreTokenAttempts = 3;
     for (var attempt = 0; attempt < maxPreTokenAttempts; attempt++) {
       if (cancelToken?.isCancelled ?? false) return;
       // 仅以实际输出正文（ContentDelta）作为不可重放分界线；思考流中断可安全重连重试
       var yieldedContent = false;
+
+      final effectiveConfig = allowOptionalExtensions
+          ? config
+          : GenerationConfig(
+              temperature: config.temperature,
+              maxTokens: config.maxTokens,
+              includeUsage: config.includeUsage,
+            );
+      final useCache =
+          allowOptionalExtensions &&
+          config.enablePromptCacheControl &&
+          _supportsExplicitCacheControl;
+      final body = buildRequestBody(
+        model: model,
+        messages: messages,
+        config: effectiveConfig,
+        useExplicitCacheControl: useCache,
+      );
 
       Response<ResponseBody> response;
       try {
@@ -91,6 +133,7 @@ class OpenAiSseClient implements LLMClient {
           cancelToken: cancelToken,
           options: Options(
             responseType: ResponseType.stream,
+            validateStatus: (_) => true,
             headers: {
               'Content-Type': 'application/json',
               'Accept': 'text/event-stream',
@@ -129,6 +172,13 @@ class OpenAiSseClient implements LLMClient {
             buffer.write('……');
             break;
           }
+        }
+        if ((status == 400 || status == 422) &&
+            allowOptionalExtensions &&
+            hasOptionalExtensions &&
+            attempt < maxPreTokenAttempts - 1) {
+          allowOptionalExtensions = false;
+          continue;
         }
         if (attempt < maxPreTokenAttempts - 1 && _isRetryableStatus(status)) {
           await _retryBackoff(attempt, cancelToken);
@@ -244,6 +294,7 @@ class OpenAiSseClient implements LLMClient {
       cancelToken: cancelToken,
       options: Options(
         receiveTimeout: const Duration(seconds: 30),
+        validateStatus: (_) => true,
         headers: {'Authorization': 'Bearer $apiKey'},
       ),
     );
@@ -295,25 +346,36 @@ class OpenAiSseClient implements LLMClient {
     }
     final usage = decoded['usage'];
     if (usage is Map) {
-      final prompt = (usage['prompt_tokens'] as num?)?.toInt() ?? 0;
-      final completion = (usage['completion_tokens'] as num?)?.toInt() ?? 0;
+      final prompt =
+          (usage['prompt_tokens'] as num?)?.toInt() ??
+          (usage['input_tokens'] as num?)?.toInt() ??
+          0;
+      final completion =
+          (usage['completion_tokens'] as num?)?.toInt() ??
+          (usage['output_tokens'] as num?)?.toInt() ??
+          0;
       final promptDetails = usage['prompt_tokens_details'];
       final completionDetails = usage['completion_tokens_details'];
       final cached =
           (usage['prompt_cache_hit_tokens'] as num?)?.toInt() ??
           (promptDetails is Map
-              ? (promptDetails['cached_tokens'] as num?)?.toInt() ?? 0
-              : 0);
+              ? (promptDetails['cached_tokens'] as num?)?.toInt()
+              : null) ??
+          (usage['cache_read_input_tokens'] as num?)?.toInt() ??
+          0;
+      final cacheCreation =
+          (usage['cache_creation_input_tokens'] as num?)?.toInt() ?? 0;
       final reasoning = completionDetails is Map
           ? (completionDetails['reasoning_tokens'] as num?)?.toInt() ?? 0
           : 0;
-      if (prompt > 0 || completion > 0) {
+      if (prompt > 0 || completion > 0 || cached > 0 || cacheCreation > 0) {
         events.add(
           UsageReport(
             promptTokens: prompt,
             completionTokens: completion,
             cachedTokens: cached,
             reasoningTokens: reasoning,
+            cacheCreationTokens: cacheCreation,
           ),
         );
       }

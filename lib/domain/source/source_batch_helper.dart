@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import '../../core/llm/llm_types.dart';
 import 'source_micro_summarizer.dart';
 
 class BatchChapterInput {
@@ -20,6 +21,15 @@ class SourceBatchHelper {
   const SourceBatchHelper._();
 
   static const int perChapterEstimateChars = 600;
+
+  static const String _jsonlInstruction =
+      '请逐段输出「增量式微摘要」JSON：每段输出【一行】JSON 对象，行与行之间用换行分隔；除此之外不要输出任何内容（不要解释、不要代码块围栏、不要编号）。';
+  static const String _schemaHeader =
+      '每行 JSON 格式（chapter 必须严格填标题括号中给出的 chapter 整数；只记录本段新出现或发生变化的信息，无新增则给空数组）：';
+  static const String _schemaJson =
+      '{"chapter": <整数章号>, "characters": [{"name": "主名", "aliases": ["别名/形态"], "role_hint": "主角/反派/配角", "camp_hint": "阵营", "traits": "性格或能力", "state_change": "状态变化"}], "relations": [{"from": "角色A", "to": "角色B", "relation": "关系描述", "kind": "亲友|盟友|爱恋|敌对|从属|竞争|未知", "line": "明线|暗线", "evidence": "依据"}], "events": [{"summary": "核心事件", "in_world_time": "书内时间(可选)", "participants": ["角色A"], "importance": "major|normal|minor"}], "worldbuilding": [{"name": "词条", "category": "力量体系|地理|势力|规则|器物", "content": "说明"}], "foreshadowing": [{"summary": "新埋或回收的伏笔一句话", "planted": true, "characters": ["相关角色"], "target_hint": "回收时简述对应前期悬念"}]}';
+  static const String _rulesLine =
+      '规则：新埋伏笔记 planted=true；本段揭晓/回收的记 planted=false 并填写 target_hint；涉及秘密/单方不知情/幕后操控的关系 line 记为 "暗线"，公开关系记为 "明线"。';
 
   static String chapterBlock(BatchChapterInput chapter) {
     final cleanTitle = chapter.title?.trim() ?? '';
@@ -44,14 +54,60 @@ class SourceBatchHelper {
 
     final lines = <String>[
       '【任务】你是小说内容分析师。下面是《$book》第 $first-$last 章的正文（共 ${chapters.length} 段）。',
-      '请逐段输出「增量式微摘要」JSON：每段输出【一行】JSON 对象，行与行之间用换行分隔；除此之外不要输出任何内容（不要解释、不要代码块围栏、不要编号）。',
-      '每行 JSON 格式（chapter 必须严格填标题括号中给出的 chapter 整数；只记录本段新出现或发生变化的信息，无新增则给空数组）：',
-      '{"chapter": <整数章号>, "characters": [{"name": "主名", "aliases": ["别名/形态"], "role_hint": "主角/反派/配角", "camp_hint": "阵营", "traits": "性格或能力", "state_change": "状态变化"}], "relations": [{"from": "角色A", "to": "角色B", "relation": "关系描述", "kind": "亲友|盟友|爱恋|敌对|从属|竞争|未知", "line": "明线|暗线", "evidence": "依据"}], "events": [{"summary": "核心事件", "in_world_time": "书内时间(可选)", "participants": ["角色A"], "importance": "major|normal|minor"}], "worldbuilding": [{"name": "词条", "category": "力量体系|地理|势力|规则|器物", "content": "说明"}], "foreshadowing": [{"summary": "新埋或回收的伏笔一句话", "planted": true, "characters": ["相关角色"], "target_hint": "回收时简述对应前期悬念"}]}',
-      '规则：新埋伏笔记 planted=true；本段揭晓/回收的记 planted=false 并填写 target_hint；涉及秘密/单方不知情/幕后操控的关系 line 记为 "暗线"，公开关系记为 "明线"。',
+      _jsonlInstruction,
+      _schemaHeader,
+      _schemaJson,
+      _rulesLine,
       '',
       for (final c in chapters) chapterBlock(c),
     ];
     return lines.join('\n\n');
+  }
+
+  /// 构建 KV 前缀缓存友好的批量 Map 消息：
+  /// - `system`（`cacheControl: true`）在全书所有批次之间保持字节级完全一致，不含任何批内章号或段数；
+  /// - `user` 仅承载当前批次章号区间与正文。
+  static List<LLMMessage> buildCachedBatchMessages({
+    required String title,
+    required List<BatchChapterInput> chapters,
+    List<String> knownCharacters = const [],
+  }) {
+    if (chapters.isEmpty) return const [];
+    final book = title.trim().isNotEmpty ? title.trim() : '这部小说';
+    final first = chapters.first.index;
+    final last = chapters.last.index;
+
+    final sysLines = <String>[
+      '【任务】你是小说内容分析师，正在对《$book》进行全书分批微摘要抽取。',
+      _jsonlInstruction,
+      _schemaHeader,
+      _schemaJson,
+      _rulesLine,
+    ];
+    final priorChars = knownCharacters
+        .map((e) => e.trim())
+        .where((e) => e.isNotEmpty)
+        .take(40)
+        .toList();
+    if (priorChars.isNotEmpty) {
+      sysLines.add(
+        '【全书高频先验人物名录（请优先沿用此主名，减少别名碎片）】\n${priorChars.join("、")}',
+      );
+    }
+
+    final userLines = <String>[
+      '下面是《$book》第 $first-$last 章的正文（共 ${chapters.length} 段），请逐段输出对应 JSON 行：',
+      for (final c in chapters) chapterBlock(c),
+    ];
+
+    return [
+      LLMMessage(
+        role: LLMRole.system,
+        content: sysLines.join('\n\n'),
+        cacheControl: true,
+      ),
+      LLMMessage(role: LLMRole.user, content: userLines.join('\n\n')),
+    ];
   }
 
   /// 解析逐行输出为有序列表（支持超长章拆多段时共享同一 chapterNo）。

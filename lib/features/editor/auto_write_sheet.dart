@@ -109,12 +109,20 @@ class _AutoWriteSheetState extends ConsumerState<AutoWriteSheet> {
       return;
     }
 
+    final toolProvider = ref.read(fastToolProviderProvider) ?? provider;
     LLMClient client;
+    LLMClient toolClient;
     try {
       client = await createClientForProvider(
         provider,
         ref.read(apiKeyVaultProvider),
       );
+      toolClient = toolProvider.id == provider.id
+          ? client
+          : await createClientForProvider(
+              toolProvider,
+              ref.read(apiKeyVaultProvider),
+            );
     } catch (e) {
       setState(() => _error = '$e');
       return;
@@ -136,6 +144,7 @@ class _AutoWriteSheetState extends ConsumerState<AutoWriteSheet> {
     final config = GenerationConfig(
       temperature: provider.temperature,
       maxTokens: provider.maxTokens,
+      enablePromptCacheControl: true,
     );
 
     try {
@@ -191,19 +200,14 @@ class _AutoWriteSheetState extends ConsumerState<AutoWriteSheet> {
           directorConfig: directorCfg,
           promptLibrary: lib,
         );
-        var writeMsgs = PromptTemplates.writing(
+        final writeMsgs = PromptTemplates.writing(
           library: lib,
+          invariantExtras: [provider.systemPromptExtra, antiAiText, r18Text],
           staticContext: ctx.staticPrefix,
           renderedContext: ctx.dynamicSuffix.isNotEmpty
               ? ctx.dynamicSuffix
               : ctx.rendered,
           wordTarget: _wordTarget,
-        );
-        writeMsgs = PromptTemplates.applyingExtra(r18Text, writeMsgs);
-        writeMsgs = PromptTemplates.applyingExtra(antiAiText, writeMsgs);
-        writeMsgs = PromptTemplates.applyingExtra(
-          provider.systemPromptExtra,
-          writeMsgs,
         );
 
         _progress.begin();
@@ -232,15 +236,16 @@ class _AutoWriteSheetState extends ConsumerState<AutoWriteSheet> {
         if (_enableFactReviewGate) {
           setState(() => _status = '5 维事实审稿《${freshCh.chapter.title}》…');
           final reviewer = FactReviewService(
-            client: client,
+            client: toolClient,
             library: lib,
-            providerExtra: provider.systemPromptExtra,
+            providerExtra: toolProvider.systemPromptExtra,
           );
           final truthArchive = FactReviewService.buildTruthArchive(
             chapter: freshCh,
             bundle: bundle,
             draftContent: draft,
             sourceWindow: sourceWindow,
+            maxChars: toolProvider.contextBudgetChars >= 80000 ? 48000 : 24000,
           );
           try {
             _progress.begin();
@@ -248,7 +253,7 @@ class _AutoWriteSheetState extends ConsumerState<AutoWriteSheet> {
               truthArchive: truthArchive,
               chapterTitle: freshCh.chapter.title,
               draftContent: draft,
-              maxTokens: provider.maxTokens,
+              maxTokens: toolProvider.maxTokens,
               onEvent: _progress.handle,
               cancelToken: _cancel,
             );
@@ -265,7 +270,8 @@ class _AutoWriteSheetState extends ConsumerState<AutoWriteSheet> {
                 chapterTitle: freshCh.chapter.title,
                 draftContent: draft,
                 issues: reviewRes.blockingIssues,
-                maxTokens: provider.maxTokens,
+                priorReviewReply: reviewRes.rawJsonReply,
+                maxTokens: toolProvider.maxTokens,
                 onEvent: _progress.handle,
                 cancelToken: _cancel,
               );
@@ -309,7 +315,7 @@ class _AutoWriteSheetState extends ConsumerState<AutoWriteSheet> {
             bundle.globalIndexMap()[freshCh.chapter.id] ??
             freshCh.chapter.sortOrder;
         final sumMsgs = PromptTemplates.applyingExtra(
-          provider.systemPromptExtra,
+          toolProvider.systemPromptExtra,
           PromptTemplates.summarize(
             library: lib,
             content: draft,
@@ -324,11 +330,14 @@ class _AutoWriteSheetState extends ConsumerState<AutoWriteSheet> {
         );
         _progress.begin();
         final rawSum = StringBuffer();
-        await for (final ev in client.streamChat(
+        await for (final ev in toolClient.streamChat(
           sumMsgs,
           config: GenerationConfig(
             temperature: 0.2,
-            maxTokens: math.max(provider.maxTokens, 12288),
+            maxTokens: math.max(toolProvider.maxTokens, 12288),
+            jsonMode: true,
+            reasoningEffort: ReasoningEffort.low,
+            enablePromptCacheControl: true,
           ),
           cancelToken: _cancel,
         )) {

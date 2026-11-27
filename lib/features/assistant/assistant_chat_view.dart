@@ -32,6 +32,24 @@ import '../../domain/writing/context_builder.dart';
 import '../app_settings/model_selector_sheet.dart';
 import 'blueprint_review_card.dart';
 
+/// 块淘汰（Block Eviction）对话窗口裁剪：
+/// 以 [blockSize] 为单位整块丢弃最旧消息，使连续 [blockSize] 轮共享同一对话前缀，
+/// 避免滑窗每轮前移 1 条导致 KV Prefix Cache 全量失效。
+@visibleForTesting
+List<T> selectCacheFriendlyHistory<T>(
+  List<T> all, {
+  int blockSize = 12,
+  int maxWindow = 24,
+}) {
+  if (all.length <= maxWindow || blockSize <= 0) {
+    return List<T>.from(all);
+  }
+  final overflow = all.length - maxWindow;
+  final dropBlocks = (overflow + blockSize - 1) ~/ blockSize;
+  final start = (dropBlocks * blockSize).clamp(0, all.length);
+  return all.sublist(start);
+}
+
 /// 作品助手统一视图：
 /// - 若作品存在未完成的立项会话，自动打开「立项共创（五阶段状态机 + Drift 持久化恢复）」；
 /// - 否则打开「写作助手（单一显式只读/读写胶囊 + zm-patch 逐项确认卡）」。
@@ -490,25 +508,34 @@ class _AssistantChatViewState extends ConsumerState<AssistantChatView> {
       budgetChars: budget,
     );
 
-    var system = PromptTemplates.writingAssistantSystem(
-      library: lib,
-      title: bundle.novel.title,
-      synopsis: bundle.novel.synopsis,
-      styleGuide: bundle.novel.styleGuide,
-      styleCard: styleCard,
-    );
-    if (refCtx.rendered.isNotEmpty) {
-      system += '\n\n【当前作品档案】\n${refCtx.rendered}';
-    }
-    system += '\n\n${AssistantSearchProtocol.systemInstruction}';
+    // 仅将静态/低频变动内容放入 system，并显式标记 cacheControl 命中 KV Prefix Cache
+    final systemParts = <String>[
+      PromptTemplates.writingAssistantSystem(
+        library: lib,
+        title: bundle.novel.title,
+        synopsis: bundle.novel.synopsis,
+        styleGuide: bundle.novel.styleGuide,
+        styleCard: styleCard,
+      ),
+      if (rwProtocol != null && rwProtocol.trim().isNotEmpty) rwProtocol.trim(),
+      if (r18Text != null && r18Text.trim().isNotEmpty) r18Text.trim(),
+      if (provider.systemPromptExtra != null &&
+          provider.systemPromptExtra!.trim().isNotEmpty)
+        provider.systemPromptExtra!.trim(),
+      AssistantSearchProtocol.systemInstruction,
+      if (refCtx.staticPrefix.trim().isNotEmpty)
+        '【当前作品档案】\n${refCtx.staticPrefix.trim()}',
+    ];
 
     final dbMsgs = await ref.read(appDatabaseProvider).getChatMessages(thread.id);
-    final recent = dbMsgs.length > 12
-        ? dbMsgs.sublist(dbMsgs.length - 12)
-        : dbMsgs;
+    final recent = selectCacheFriendlyHistory(dbMsgs);
 
-    var msgs = <LLMMessage>[
-      LLMMessage(role: LLMRole.system, content: system),
+    final msgs = <LLMMessage>[
+      LLMMessage(
+        role: LLMRole.system,
+        content: systemParts.join('\n\n'),
+        cacheControl: true,
+      ),
       for (final m in recent)
         LLMMessage(
           role: m.role == 'user' ? LLMRole.user : LLMRole.assistant,
@@ -517,9 +544,21 @@ class _AssistantChatViewState extends ConsumerState<AssistantChatView> {
               : m.content,
         ),
     ];
-    msgs = PromptTemplates.applyingExtra(rwProtocol, msgs);
-    msgs = PromptTemplates.applyingExtra(r18Text, msgs);
-    msgs = PromptTemplates.applyingExtra(provider.systemPromptExtra, msgs);
+
+    // 将动态状态仅注入最新一条 user 消息，确保历史对话轮次保持字节级不变
+    final dynamicState = refCtx.dynamicSuffix.trim().isNotEmpty
+        ? refCtx.dynamicSuffix.trim()
+        : (refCtx.staticPrefix.trim().isEmpty ? refCtx.rendered.trim() : '');
+    if (dynamicState.isNotEmpty) {
+      final lastUserIdx = msgs.lastIndexWhere((m) => m.role == LLMRole.user);
+      if (lastUserIdx != -1) {
+        final prev = msgs[lastUserIdx];
+        msgs[lastUserIdx] = LLMMessage(
+          role: LLMRole.user,
+          content: '【实时作品动态状态】\n$dynamicState\n\n${prev.content}',
+        );
+      }
+    }
 
     if (!mounted) return;
     if (!await PromptGuard.authorize(
@@ -555,6 +594,7 @@ class _AssistantChatViewState extends ConsumerState<AssistantChatView> {
           config: GenerationConfig(
             temperature: provider.temperature,
             maxTokens: provider.maxTokens,
+            enablePromptCacheControl: true,
           ),
           cancelToken: _cancel,
         )) {

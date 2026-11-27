@@ -99,12 +99,22 @@ class FactReviewResult {
     required this.summary,
     required this.dimensionResults,
     required this.issues,
+    this.rawJsonReply,
   });
 
   final bool overallPass;
   final String summary;
   final List<FactDimensionResult> dimensionResults;
   final List<FactReviewIssue> issues;
+  final String? rawJsonReply;
+
+  FactReviewResult withRawReply(String raw) => FactReviewResult(
+    overallPass: overallPass,
+    summary: summary,
+    dimensionResults: dimensionResults,
+    issues: issues,
+    rawJsonReply: raw,
+  );
 
   bool get hasBlocking => issues.any((i) => i.isBlocking);
   List<FactReviewIssue> get blockingIssues =>
@@ -410,25 +420,30 @@ class FactReviewService {
       config: GenerationConfig(
         temperature: 0.15,
         maxTokens: math.max(maxTokens, 12288),
+        jsonMode: true,
+        reasoningEffort: ReasoningEffort.medium,
+        enablePromptCacheControl: true,
       ),
       cancelToken: cancelToken,
     )) {
       onEvent?.call(ev);
       if (ev is ContentDelta) raw.write(ev.text);
     }
-    final parsed = FactReviewResult.tryParse(raw.toString());
+    final rawText = raw.toString();
+    final parsed = FactReviewResult.tryParse(rawText);
     if (parsed == null) {
       throw const FormatException('事实审稿 JSON 解析失败，请重试或切换支持结构化输出的模型');
     }
-    return parsed;
+    return parsed.withRawReply(rawText);
   }
 
-  /// 按选中的事实问题清单执行单次定点最小化修订。
+  /// 按选中的事实问题清单执行单次定点最小化修订（优先接续首轮审稿 KV 缓存）。
   Future<String> applyFixes({
     required String truthArchive,
     required String chapterTitle,
     required String draftContent,
     required List<FactReviewIssue> issues,
+    String? priorReviewReply,
     int maxTokens = 16384,
     void Function(StreamEvent)? onEvent,
     CancelToken? cancelToken,
@@ -448,21 +463,37 @@ class FactReviewService {
       }
     }
 
-    final msgs = PromptTemplates.applyingExtra(
-      providerExtra,
-      PromptTemplates.factReviewFix(
-        truthArchive: truthArchive,
-        chapterTitle: chapterTitle,
-        draftContent: draftContent,
-        issuesChecklist: checklist.toString(),
-      ),
-    );
+    final msgs =
+        (priorReviewReply != null && priorReviewReply.trim().isNotEmpty)
+        ? PromptTemplates.factReviewFixFollowUp(
+            reviewMessages: PromptTemplates.applyingExtra(
+              providerExtra,
+              PromptTemplates.factReview(
+                library: library,
+                truthArchive: truthArchive,
+                chapterTitle: chapterTitle,
+                draftContent: draftContent,
+              ),
+            ),
+            reviewAssistantReply: priorReviewReply,
+            issuesChecklist: checklist.toString(),
+          )
+        : PromptTemplates.applyingExtra(
+            providerExtra,
+            PromptTemplates.factReviewFix(
+              truthArchive: truthArchive,
+              chapterTitle: chapterTitle,
+              draftContent: draftContent,
+              issuesChecklist: checklist.toString(),
+            ),
+          );
     final out = StringBuffer();
     await for (final ev in client.streamChat(
       msgs,
       config: GenerationConfig(
         temperature: 0.3,
         maxTokens: math.max(maxTokens, 12288),
+        enablePromptCacheControl: true,
       ),
       cancelToken: cancelToken,
     )) {

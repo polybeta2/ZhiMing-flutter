@@ -139,6 +139,7 @@ class _FactReviewSheetState extends ConsumerState<FactReviewSheet> {
         chapterTitle: widget.chapterTitle,
         draftContent: widget.draft,
         issues: picked,
+        priorReviewReply: res.rawJsonReply,
         maxTokens: widget.provider.maxTokens,
         onEvent: _fixProgress.handle,
         cancelToken: _fixCancel,

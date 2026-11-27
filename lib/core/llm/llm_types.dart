@@ -9,13 +9,42 @@ enum LLMRole {
   final String value;
 }
 
+enum ReasoningEffort {
+  minimal('minimal'),
+  low('low'),
+  medium('medium'),
+  high('high');
+
+  const ReasoningEffort(this.wireValue);
+  final String wireValue;
+}
+
 class LLMMessage {
-  const LLMMessage({required this.role, required this.content});
+  const LLMMessage({
+    required this.role,
+    required this.content,
+    this.cacheControl = false,
+  });
 
   final LLMRole role;
   final String content;
+  final bool cacheControl;
 
-  Map<String, String> toJson() => {'role': role.value, 'content': content};
+  Map<String, dynamic> toJson({bool withCacheControl = false}) {
+    if (withCacheControl && cacheControl) {
+      return {
+        'role': role.value,
+        'content': [
+          {
+            'type': 'text',
+            'text': content,
+            'cache_control': {'type': 'ephemeral'},
+          },
+        ],
+      };
+    }
+    return {'role': role.value, 'content': content};
+  }
 }
 
 class GenerationConfig {
@@ -23,11 +52,17 @@ class GenerationConfig {
     this.temperature = 0.8,
     this.maxTokens = 16384,
     this.includeUsage = true,
+    this.jsonMode = false,
+    this.reasoningEffort,
+    this.enablePromptCacheControl = false,
   });
 
   final double temperature;
   final int maxTokens;
   final bool includeUsage;
+  final bool jsonMode;
+  final ReasoningEffort? reasoningEffort;
+  final bool enablePromptCacheControl;
 }
 
 /// 流式事件：思维链、正文与真实用量分通道
@@ -51,12 +86,14 @@ final class UsageReport extends StreamEvent {
     required this.completionTokens,
     this.cachedTokens = 0,
     this.reasoningTokens = 0,
+    this.cacheCreationTokens = 0,
   });
 
   final int promptTokens;
   final int completionTokens;
   final int cachedTokens;
   final int reasoningTokens;
+  final int cacheCreationTokens;
 
   /// KV 前缀缓存命中率（0.0 ~ 1.0）
   double get cacheHitRate =>
