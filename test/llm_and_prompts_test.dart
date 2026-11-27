@@ -264,5 +264,48 @@ void main() {
         BackgroundKeepAliveMode.lowPowerLocation,
       );
     });
+
+    test('parses native status & runs timed self-test safely', () async {
+      SharedPreferences.setMockInitialValues({});
+      var active = false;
+      var mode = 'none';
+      final service = BackgroundKeepAliveService.forTesting(
+        isIos: true,
+        invoker: (method, [args]) async {
+          if (method == 'start') {
+            mode = (args?['mode'] as String?) ?? 'none';
+            active = mode != 'none';
+          } else if (method == 'stop') {
+            active = false;
+            mode = 'none';
+          }
+          return {
+            'mode': mode,
+            'active': active,
+            'audioPlaying': false,
+            'locationUpdating': active && mode == 'low_power_location',
+            'locationAuth': 'authorizedWhenInUse',
+            'blueIndicatorExpected': active && mode == 'low_power_location',
+          };
+        },
+      );
+
+      await service.setMode(BackgroundKeepAliveMode.lowPowerLocation);
+      KeepAliveNativeStatus? startedSnapshot;
+      final res = await service.runSelfTest(
+        duration: Duration.zero,
+        onStarted: (s) => startedSnapshot = s,
+      );
+
+      expect(startedSnapshot, isNotNull);
+      expect(startedSnapshot!.active, isTrue);
+      expect(startedSnapshot!.blueIndicatorExpected, isTrue);
+      expect(res.locationUpdating, isTrue);
+      expect(service.activeCount, 0);
+      expect(service.lastStatus.active, isFalse);
+
+      final desktopService = BackgroundKeepAliveService.forTesting(isIos: false);
+      expect((await desktopService.getStatus()).active, isFalse);
+    });
   });
 }

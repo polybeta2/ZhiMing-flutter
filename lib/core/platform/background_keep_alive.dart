@@ -15,12 +15,12 @@ enum BackgroundKeepAliveMode {
   silentAudio(
     storageKey: 'silent_audio',
     label: '静音音频',
-    description: '仅在后台扫描/长任务运行期间循环播放无声音频（混音不打断其它音乐），保活最稳定，无需额外权限。',
+    description: '仅在后台任务期间播放 44.1kHz 微幅混音保持音频会话活跃（不打断其它音乐，人耳不可闻），无需额外权限。',
   ),
   lowPowerLocation(
     storageKey: 'low_power_location',
     label: '持续位置获取',
-    description: '仅在后台扫描/长任务运行期间启用 3km 低精度定位保活，不记录也不上传任何坐标；首次使用需授予定位权限。',
+    description: '仅在后台任务期间启用活跃后台定位保活（iOS 会在状态栏显示“织命正在活跃使用你的位置”蓝标，这是系统允许持续运行的信号），绝不记录或上传坐标。',
   );
 
   const BackgroundKeepAliveMode({
@@ -74,11 +74,71 @@ enum LocationPermissionState {
   };
 }
 
+/// 原生保活运行时状态快照（由 iOS `zhiming/background_keep_alive` 通道返回）。
+class KeepAliveNativeStatus {
+  const KeepAliveNativeStatus({
+    required this.mode,
+    required this.active,
+    required this.audioPlaying,
+    required this.locationUpdating,
+    required this.locationAuth,
+    required this.blueIndicatorExpected,
+    this.lastError,
+  });
+
+  static const KeepAliveNativeStatus empty = KeepAliveNativeStatus(
+    mode: 'none',
+    active: false,
+    audioPlaying: false,
+    locationUpdating: false,
+    locationAuth: LocationPermissionState.unknown,
+    blueIndicatorExpected: false,
+  );
+
+  factory KeepAliveNativeStatus.fromMap(Map<Object?, Object?> raw) {
+    return KeepAliveNativeStatus(
+      mode: raw['mode']?.toString() ?? 'none',
+      active: raw['active'] == true,
+      audioPlaying: raw['audioPlaying'] == true,
+      locationUpdating: raw['locationUpdating'] == true,
+      locationAuth: LocationPermissionState.fromWire(
+        raw['locationAuth']?.toString(),
+      ),
+      blueIndicatorExpected: raw['blueIndicatorExpected'] == true,
+      lastError: raw['lastError']?.toString(),
+    );
+  }
+
+  final String mode;
+  final bool active;
+  final bool audioPlaying;
+  final bool locationUpdating;
+  final LocationPermissionState locationAuth;
+  final bool blueIndicatorExpected;
+  final String? lastError;
+
+  String get summaryLabel {
+    if (!active) {
+      if (lastError != null && lastError!.isNotEmpty) {
+        return '未激活（$lastError）';
+      }
+      return '未激活';
+    }
+    if (audioPlaying) return '已激活：音频会话持续运行中';
+    if (locationUpdating) {
+      return blueIndicatorExpected
+          ? '已激活：活跃定位中（切换至桌面应显示状态栏蓝标）'
+          : '已激活：定位更新运行中';
+    }
+    return '已激活';
+  }
+}
+
 typedef KeepAlivePlatformInvoke =
     Future<dynamic> Function(String method, [Map<String, dynamic>? arguments]);
 
 /// 跨平台后台保活管理器：
-/// - 在 iOS 上通过原生 `zhiming/background_keep_alive` 通道控制 `AVAudioPlayer`（静音混音）或 `CLLocationManager`（3km 低精度）；
+/// - 在 iOS 上通过原生 `zhiming/background_keep_alive` 通道控制 `AVAudioPlayer`（微幅混音）或 `CLLocationManager`（活跃后台定位指示器）；
 /// - 使用引用计数（[acquire] / [release]），仅在扫描/自动撰写/文风蒸馏等任务活跃期间启停保活；
 /// - 在 Windows / macOS / Linux / Web 与单元测试环境下自动安全降级为无操作。
 class BackgroundKeepAliveService {
@@ -117,9 +177,11 @@ class BackgroundKeepAliveService {
   bool _prefsLoaded = false;
   bool _nativeRunning = false;
   int _activeCount = 0;
+  KeepAliveNativeStatus _lastStatus = KeepAliveNativeStatus.empty;
 
   BackgroundKeepAliveMode get mode => _mode;
   int get activeCount => _activeCount;
+  KeepAliveNativeStatus get lastStatus => _lastStatus;
 
   bool get _runsOnIos =>
       _isIos?.call() ??
@@ -131,6 +193,7 @@ class BackgroundKeepAliveService {
     _prefsLoaded = false;
     _nativeRunning = false;
     _activeCount = 0;
+    _lastStatus = KeepAliveNativeStatus.empty;
   }
 
   /// 从 SharedPreferences 加载用户选择的后台保活模式（幂等，若已通过 setMode 设置则保留内存值）。
@@ -192,8 +255,11 @@ class BackgroundKeepAliveService {
       return;
     }
     try {
-      await _invoker('start', {'mode': _mode.storageKey});
+      final res = await _invoker('start', {'mode': _mode.storageKey});
       _nativeRunning = true;
+      if (res is Map) {
+        _lastStatus = KeepAliveNativeStatus.fromMap(res);
+      }
     } on MissingPluginException {
       // ignore in headless / non-iOS bindings
     } catch (_) {}
@@ -202,11 +268,54 @@ class BackgroundKeepAliveService {
   Future<void> _stopNative() async {
     if (!_runsOnIos || !_nativeRunning) return;
     try {
-      await _invoker('stop');
+      final res = await _invoker('stop');
+      if (res is Map) {
+        _lastStatus = KeepAliveNativeStatus.fromMap(res);
+      } else {
+        _lastStatus = KeepAliveNativeStatus.empty;
+      }
     } on MissingPluginException {
       // ignore in headless / non-iOS bindings
     } catch (_) {} finally {
       _nativeRunning = false;
+    }
+  }
+
+  /// 查询当前 iOS 原生保活通道运行时状态；非 iOS 或通道未注册时返回 [KeepAliveNativeStatus.empty]。
+  Future<KeepAliveNativeStatus> getStatus() async {
+    if (!_runsOnIos) return KeepAliveNativeStatus.empty;
+    try {
+      final res = await _invoker('getStatus');
+      if (res is Map) {
+        _lastStatus = KeepAliveNativeStatus.fromMap(res);
+        return _lastStatus;
+      }
+      return KeepAliveNativeStatus.empty;
+    } catch (_) {
+      return KeepAliveNativeStatus.empty;
+    }
+  }
+
+  /// 试运行指定时长的保活自检：临时持有一次 [acquire]，并在结束后自动 [release]。
+  /// 在 iOS 真机设置页可点击触发，并在试运行期间切换回桌面观察状态栏蓝标或音频后台会话。
+  Future<KeepAliveNativeStatus> runSelfTest({
+    Duration duration = const Duration(seconds: 6),
+    void Function(KeepAliveNativeStatus status)? onStarted,
+  }) async {
+    await acquire();
+    var snapshot = await getStatus();
+    if (!snapshot.active && _lastStatus.mode == _mode.storageKey) {
+      snapshot = _lastStatus;
+    }
+    onStarted?.call(snapshot);
+    try {
+      if (duration > Duration.zero) {
+        await Future<void>.delayed(duration);
+      }
+      final latest = await getStatus();
+      return latest.active || latest.lastError != null ? latest : snapshot;
+    } finally {
+      await release();
     }
   }
 

@@ -38,6 +38,7 @@ dev_dependencies:
 flutter:
   uses-material-design: true
   assets:
+    - assets/icons/
     - assets/animations/
     - assets/skill_packs/fictional-erotica/zh/
     - assets/skill_packs/fictional-erotica/en/

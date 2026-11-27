@@ -117,7 +117,11 @@ final appearanceProvider =
     );
 
 abstract final class AppThemeBuilder {
-  static ThemeData build(Color seedColor, Brightness brightness) {
+  static ThemeData build(
+    Color seedColor,
+    Brightness brightness, {
+    TargetPlatform? platform,
+  }) {
     final isDark = brightness == Brightness.dark;
     final colorScheme = ColorScheme.fromSeed(
       seedColor: seedColor,
@@ -135,6 +139,7 @@ abstract final class AppThemeBuilder {
 
     return ThemeData(
       useMaterial3: true,
+      platform: platform,
       brightness: brightness,
       colorScheme: colorScheme,
       scaffoldBackgroundColor: scaffoldBg,
@@ -152,7 +157,7 @@ abstract final class AppThemeBuilder {
         surfaceTintColor: Colors.transparent,
         elevation: 0,
         scrolledUnderElevation: 0.5,
-        centerTitle: false,
+        centerTitle: platform == TargetPlatform.iOS,
         titleTextStyle: TextStyle(
           fontSize: 18,
           fontWeight: FontWeight.w600,

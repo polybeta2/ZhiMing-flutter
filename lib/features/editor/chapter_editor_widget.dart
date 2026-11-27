@@ -131,6 +131,8 @@ class _ChapterEditorWidgetState extends ConsumerState<ChapterEditorWidget> {
   bool _loading = true;
   bool _dirty = false;
   Timer? _debounce;
+  int _chapterLoadGeneration = 0;
+  Future<void> _saveQueue = Future<void>.value();
 
   // 编辑器快捷工具
   bool _showFindBar = false;
@@ -164,16 +166,15 @@ class _ChapterEditorWidgetState extends ConsumerState<ChapterEditorWidget> {
   void didUpdateWidget(covariant ChapterEditorWidget oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.chapterId != widget.chapterId) {
-      _flushSaveSync();
-      _resetDraft();
-      _loadChapter(widget.chapterId);
+      _debounce?.cancel();
+      unawaited(_switchChapter(widget.chapterId));
     }
   }
 
   @override
   void dispose() {
     _debounce?.cancel();
-    _flushSaveSync();
+    unawaited(_flushSaveOnDispose());
     _draftCancel?.cancel();
     _summaryCancel?.cancel();
     _draftProgress.dispose();
@@ -199,13 +200,30 @@ class _ChapterEditorWidgetState extends ConsumerState<ChapterEditorWidget> {
   }
 
   Future<void> _loadChapter(String chapterId) async {
+    final generation = ++_chapterLoadGeneration;
     setState(() => _loading = true);
     final ch = await ref.read(appDatabaseProvider).getChapter(chapterId);
-    if (!mounted) return;
+    if (!mounted ||
+        generation != _chapterLoadGeneration ||
+        chapterId != widget.chapterId) {
+      return;
+    }
     _chapter = ch;
     _textCtrl.text = ch?.content ?? '';
     _dirty = false;
     setState(() => _loading = false);
+  }
+
+  Future<void> _switchChapter(String chapterId) async {
+    while (_dirty) {
+      final chapter = _chapter;
+      if (chapter == null || chapter.isOriginal) break;
+      final saved = await _saveNow();
+      if (!saved || !mounted || chapterId != widget.chapterId) return;
+    }
+    if (!mounted || chapterId != widget.chapterId) return;
+    _resetDraft();
+    await _loadChapter(chapterId);
   }
 
   void _onTextOrSelectionChanged() {
@@ -218,35 +236,53 @@ class _ChapterEditorWidgetState extends ConsumerState<ChapterEditorWidget> {
     setState(() {});
   }
 
-  void _flushSaveSync() {
+  Future<void> _flushSaveOnDispose() async {
     if (_dirty && _chapter != null && !_chapter!.isOriginal) {
-      final chId = _chapter!.id;
-      final content = _textCtrl.text;
-      _dirty = false;
-      _repo.saveChapterContent(
-        novelId: widget.novelId,
-        chapterId: chId,
-        content: content,
-      );
+      await _saveNow();
     }
   }
 
-  Future<void> _saveNow({bool notify = false}) async {
+  Future<bool> _saveNow({bool notify = false}) async {
     final ch = _chapter;
-    if (ch == null || ch.isOriginal) return;
+    if (ch == null || ch.isOriginal) return true;
     _debounce?.cancel();
-    _dirty = false;
     final content = _textCtrl.text;
-    await ref
-        .read(novelRepositoryProvider)
-        .saveChapterContent(
-          novelId: widget.novelId,
-          chapterId: ch.id,
-          content: content,
+    final previousSave = _saveQueue;
+    final save = previousSave
+        .catchError((Object _) {})
+        .then(
+          (_) => _repo.saveChapterContent(
+            novelId: widget.novelId,
+            chapterId: ch.id,
+            content: content,
+          ),
         );
-    _chapter = ch.copyWith(content: content, wordCount: content.length);
-    if (notify && mounted) {
-      showZmSnackBar(context, '已保存（${content.length} 字）');
+    _saveQueue = save;
+    try {
+      await save;
+      if (_chapter?.id == ch.id) {
+        _chapter = ch.copyWith(content: content, wordCount: content.length);
+        _dirty = _textCtrl.text != content;
+      }
+      if (notify && mounted) {
+        showZmSnackBar(context, '已保存（${content.length} 字）');
+      }
+      return true;
+    } catch (error, stackTrace) {
+      if (_chapter?.id == ch.id) _dirty = true;
+      if (mounted) {
+        showZmSnackBar(context, '保存失败，正文仍保留在编辑器中：$error', isError: true);
+      } else {
+        FlutterError.reportError(
+          FlutterErrorDetails(
+            exception: error,
+            stack: stackTrace,
+            library: 'chapter editor',
+            context: ErrorDescription('while saving a chapter during disposal'),
+          ),
+        );
+      }
+      return false;
     }
   }
 
@@ -339,9 +375,7 @@ class _ChapterEditorWidgetState extends ConsumerState<ChapterEditorWidget> {
                   maxLines: 4,
                   decoration: InputDecoration(
                     labelText: '附加指令（可选）',
-                    hintText: isNew
-                        ? '例如：开篇以对话切入，节奏紧凑…'
-                        : '例如：本段偏动作推进，少写心理独白…',
+                    hintText: isNew ? '例如：开篇以对话切入，节奏紧凑…' : '例如：本段偏动作推进，少写心理独白…',
                   ),
                 ),
                 const SizedBox(height: 8),
@@ -373,9 +407,7 @@ class _ChapterEditorWidgetState extends ConsumerState<ChapterEditorWidget> {
                           '提示：可在「设定集 → 作品信息」按书开启电影运镜 / 活人感 / 防全知 / 深度推演等写作导演开关。',
                           style: TextStyle(
                             fontSize: 11,
-                            color: Theme.of(
-                              ctx,
-                            ).colorScheme.onSurfaceVariant,
+                            color: Theme.of(ctx).colorScheme.onSurfaceVariant,
                           ),
                         ),
                       );
@@ -388,7 +420,10 @@ class _ChapterEditorWidgetState extends ConsumerState<ChapterEditorWidget> {
                         children: [
                           for (final l in labels)
                             Chip(
-                              label: Text(l, style: const TextStyle(fontSize: 11)),
+                              label: Text(
+                                l,
+                                style: const TextStyle(fontSize: 11),
+                              ),
                               visualDensity: VisualDensity.compact,
                               materialTapTargetSize:
                                   MaterialTapTargetSize.shrinkWrap,
@@ -882,9 +917,10 @@ class _ChapterEditorWidgetState extends ConsumerState<ChapterEditorWidget> {
             charNameById[r.targetCharacterId] != null)
           '${charNameById[r.sourceCharacterId]} ↔ ${charNameById[r.targetCharacterId]}［${r.relationType}·${r.line}］：${r.label}',
     ];
-    final openFs = (await db.getForeshadowings(
-      widget.novelId,
-    )).where((f) => f.status != 'resolved').map((f) => f.title).toList();
+    final openFs = (await db.getForeshadowings(widget.novelId))
+        .where((f) => f.status != 'resolved')
+        .map((f) => f.title)
+        .toList();
     final bundleForOrder = await repo.loadBundle(widget.novelId);
     final chapterOrder =
         bundleForOrder?.globalIndexMap()[_chapter!.id] ?? _chapter!.sortOrder;
@@ -1099,9 +1135,8 @@ class _ChapterEditorWidgetState extends ConsumerState<ChapterEditorWidget> {
               children: [
                 Text(
                   '编辑器排版与护眼纸感',
-                  style: Theme.of(ctx).textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.w600,
-                  ),
+                  style: Theme.of(ctx).textTheme.titleMedium
+                      ?.copyWith(fontWeight: FontWeight.w600),
                 ),
                 const SizedBox(height: 12),
                 Wrap(
@@ -1252,7 +1287,11 @@ class _ChapterEditorWidgetState extends ConsumerState<ChapterEditorWidget> {
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
             decoration: BoxDecoration(
               color: cs.surface,
-              border: Border(bottom: BorderSide(color: cs.outlineVariant.withValues(alpha: 0.4))),
+              border: Border(
+                bottom: BorderSide(
+                  color: cs.outlineVariant.withValues(alpha: 0.4),
+                ),
+              ),
             ),
             child: Row(
               children: [
@@ -1768,10 +1807,7 @@ class _ChapterEditorWidgetState extends ConsumerState<ChapterEditorWidget> {
                     child: const Text('停止生成'),
                   )
                 else ...[
-                  TextButton(
-                    onPressed: _resetDraft,
-                    child: const Text('放弃'),
-                  ),
+                  TextButton(onPressed: _resetDraft, child: const Text('放弃')),
                   OutlinedButton(
                     onPressed: _regenerate,
                     child: const Text('重新生成'),
@@ -1845,9 +1881,8 @@ class _SummarySheetState extends State<_SummarySheet> {
               Expanded(
                 child: Text(
                   '叙事账本 · ${widget.chapter.title}',
-                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.w600,
-                  ),
+                  style: Theme.of(context).textTheme.titleMedium
+                      ?.copyWith(fontWeight: FontWeight.w600),
                 ),
               ),
               FilledButton.tonalIcon(
@@ -1939,9 +1974,8 @@ class _SnapshotHistorySheet extends ConsumerWidget {
                 Expanded(
                   child: Text(
                     '版本快照（最近 50 版，回退永不丢历史）',
-                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                      fontWeight: FontWeight.w600,
-                    ),
+                    style: Theme.of(context).textTheme.titleMedium
+                        ?.copyWith(fontWeight: FontWeight.w600),
                   ),
                 ),
                 FilledButton.tonalIcon(
@@ -1983,24 +2017,24 @@ class _SnapshotHistorySheet extends ConsumerWidget {
                         ),
                         trailing: OutlinedButton(
                           onPressed: () async {
-                                final nav = Navigator.of(context);
-                                final ok = await showDiffConfirmDialog(
-                                  context,
-                                  title: '对比并回退到 v${s.versionNumber}',
-                                  before: currentText,
-                                  after: s.content,
-                                  confirmLabel: '确认回退',
+                            final nav = Navigator.of(context);
+                            final ok = await showDiffConfirmDialog(
+                              context,
+                              title: '对比并回退到 v${s.versionNumber}',
+                              before: currentText,
+                              after: s.content,
+                              confirmLabel: '确认回退',
+                            );
+                            if (!ok) return;
+                            await ref
+                                .read(novelRepositoryProvider)
+                                .restoreSnapshot(
+                                  novelId: novelId,
+                                  chapterId: chapterId,
+                                  snapshot: s,
                                 );
-                                if (!ok) return;
-                                await ref
-                                    .read(novelRepositoryProvider)
-                                    .restoreSnapshot(
-                                      novelId: novelId,
-                                      chapterId: chapterId,
-                                      snapshot: s,
-                                    );
-                                onRestored(s.content);
-                                nav.pop();
+                            onRestored(s.content);
+                            nav.pop();
                           },
                           child: const Text('对比回退'),
                         ),
@@ -2293,9 +2327,7 @@ class _LedgerConfirmDialogState extends State<_LedgerConfirmDialog> {
                     onChanged: (v) => setState(() {
                       v == true ? _resolvedFs.add(i) : _resolvedFs.remove(i);
                     }),
-                    title: Text(
-                      e.summaryResult.resolvedForeshadowingTitles[i],
-                    ),
+                    title: Text(e.summaryResult.resolvedForeshadowingTitles[i]),
                   ),
               ],
               if (e.relationshipDeltas.isNotEmpty) ...[

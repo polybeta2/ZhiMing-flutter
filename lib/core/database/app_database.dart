@@ -58,7 +58,10 @@ class AppDatabase extends _$AppDatabase {
         await m.addColumn(characters, characters.camp);
         await m.addColumn(characters, characters.role);
         await m.addColumn(characters, characters.arcJson);
-        await m.addColumn(foreshadowings, foreshadowings.involvedCharactersJson);
+        await m.addColumn(
+          foreshadowings,
+          foreshadowings.involvedCharactersJson,
+        );
         await m.addColumn(foreshadowings, foreshadowings.resolvedChapterOrder);
         await m.addColumn(foreshadowings, foreshadowings.payoffDetail);
       }
@@ -383,7 +386,9 @@ class AppDatabase extends _$AppDatabase {
   }
 
   Future<void> clearChatMessages(String threadId) {
-    return (delete(chatMessages)..where((t) => t.threadId.equals(threadId))).go();
+    return (delete(
+      chatMessages,
+    )..where((t) => t.threadId.equals(threadId))).go();
   }
 
   // ---- Providers ----
@@ -406,9 +411,11 @@ class AppDatabase extends _$AppDatabase {
 
   Future<void> makeDefaultProvider(String providerId) async {
     await transaction(() async {
-      await update(providers).write(const ProvidersCompanion(isDefault: Value(false)));
-      await (update(providers)..where((t) => t.id.equals(providerId)))
-          .write(const ProvidersCompanion(isDefault: Value(true)));
+      await update(providers)
+          .write(const ProvidersCompanion(isDefault: Value(false)));
+      await (update(providers)..where((t) => t.id.equals(providerId))).write(
+        const ProvidersCompanion(isDefault: Value(true)),
+      );
     });
   }
 
@@ -453,9 +460,7 @@ class AppDatabase extends _$AppDatabase {
   /// 删除文风档案并解绑引用作品，避免悬挂 UUID。
   Future<void> deleteStyleProfileUnbinding(String profileId) async {
     await transaction(() async {
-      await (delete(
-        styleProfiles,
-      )..where((t) => t.id.equals(profileId))).go();
+      await (delete(styleProfiles)..where((t) => t.id.equals(profileId))).go();
       await (update(novels)
             ..where((t) => t.activeStyleProfileId.equals(profileId)))
           .write(const NovelsCompanion(activeStyleProfileId: Value(null)));
@@ -485,16 +490,18 @@ class AppDatabase extends _$AppDatabase {
     String profileId,
     BlobStore blobs,
   ) async {
-    await transaction(() async {
-      await (delete(
-        sourceProfiles,
-      )..where((t) => t.id.equals(profileId))).go();
-      await (update(novels)..where((t) => t.sourceProfileId.equals(profileId)))
-          .write(const NovelsCompanion(sourceProfileId: Value(null)));
-      await clearScanCheckpoints(profileId);
-    });
-    await blobs.delete(BlobKinds.continuation, profileId);
-    await blobs.delete(BlobKinds.scanTask, profileId);
+    await blobs.withTemporarilyRemoved(
+      [(BlobKinds.continuation, profileId), (BlobKinds.scanTask, profileId)],
+      () => transaction(() async {
+        await (delete(
+          sourceProfiles,
+        )..where((t) => t.id.equals(profileId))).go();
+        await (update(novels)
+              ..where((t) => t.sourceProfileId.equals(profileId)))
+            .write(const NovelsCompanion(sourceProfileId: Value(null)));
+        await clearScanCheckpoints(profileId);
+      }),
+    );
   }
 
   Stream<List<ScanTask>> watchScanTasks() {
@@ -668,7 +675,10 @@ class AppDatabase extends _$AppDatabase {
     )..where((t) => t.threadId.equals(threadId))).go();
   }
 
-  Future<void> saveStyleDistillCache(String payloadJson, {String slot = 'latest'}) {
+  Future<void> saveStyleDistillCache(
+    String payloadJson, {
+    String slot = 'latest',
+  }) {
     return into(styleDistillCaches).insertOnConflictUpdate(
       StyleDistillCachesCompanion.insert(
         slot: slot,
@@ -686,9 +696,7 @@ class AppDatabase extends _$AppDatabase {
   }
 
   Future<void> deleteStyleDistillCache({String slot = 'latest'}) {
-    return (delete(
-      styleDistillCaches,
-    )..where((t) => t.slot.equals(slot))).go();
+    return (delete(styleDistillCaches)..where((t) => t.slot.equals(slot))).go();
   }
 }
 

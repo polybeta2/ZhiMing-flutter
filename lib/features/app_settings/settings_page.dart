@@ -33,6 +33,9 @@ class SettingsPage extends ConsumerWidget {
   ) async {
     var perm = await BackgroundKeepAliveService.instance
         .getLocationPermission();
+    var nativeStatus = await BackgroundKeepAliveService.instance.getStatus();
+    var selfTesting = false;
+    String? selfTestHint;
     if (!context.mounted) return;
     await showDialog<void>(
       context: context,
@@ -69,6 +72,15 @@ class SettingsPage extends ConsumerWidget {
                             if (ctx.mounted) {
                               setLocalState(() => perm = nextPerm);
                             }
+                          }
+                          final nextStatus = await BackgroundKeepAliveService
+                              .instance
+                              .getStatus();
+                          if (ctx.mounted) {
+                            setLocalState(() {
+                              nativeStatus = nextStatus;
+                              selfTestHint = null;
+                            });
                           }
                         },
                         child: Column(
@@ -118,6 +130,90 @@ class SettingsPage extends ConsumerWidget {
                                       .openAppSettings(),
                                   child: const Text('去设置'),
                                 ),
+                            ],
+                          ),
+                        ),
+                      ],
+                      if (current != BackgroundKeepAliveMode.none) ...[
+                        const SizedBox(height: 10),
+                        Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.all(10),
+                          decoration: BoxDecoration(
+                            color: nativeStatus.active
+                                ? Theme.of(ctx).colorScheme.primaryContainer
+                                      .withValues(alpha: 0.45)
+                                : Theme.of(
+                                    ctx,
+                                  ).colorScheme.surfaceContainerHighest,
+                            borderRadius: BorderRadius.circular(
+                              AppTokens.radiusInput,
+                            ),
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                '原生状态：${nativeStatus.summaryLabel}',
+                                style: Theme.of(ctx).textTheme.bodySmall
+                                    ?.copyWith(fontWeight: FontWeight.w600),
+                              ),
+                              if (selfTestHint != null) ...[
+                                const SizedBox(height: 4),
+                                Text(
+                                  selfTestHint!,
+                                  style: Theme.of(ctx).textTheme.labelSmall
+                                      ?.copyWith(
+                                        color: Theme.of(
+                                          ctx,
+                                        ).colorScheme.onSurfaceVariant,
+                                      ),
+                                ),
+                              ],
+                              const SizedBox(height: 8),
+                              FilledButton.tonalIcon(
+                                onPressed: selfTesting
+                                    ? null
+                                    : () async {
+                                        setLocalState(() {
+                                          selfTesting = true;
+                                          selfTestHint = '正在请求原生通道启动 6 秒保活自检…';
+                                        });
+                                        final finalStatus =
+                                            await BackgroundKeepAliveService
+                                                .instance
+                                                .runSelfTest(
+                                                  onStarted: (started) {
+                                                    if (!ctx.mounted) return;
+                                                    setLocalState(() {
+                                                      nativeStatus = started;
+                                                      selfTestHint =
+                                                          started.blueIndicatorExpected
+                                                          ? '已启动 6 秒自检：现在可按 Home 键回到桌面观察蓝色位置指示条，6 秒后自动结束。'
+                                                          : '已启动 6 秒自检：可切到后台或观察原生音频/定位状态，6 秒后自动结束。';
+                                                    });
+                                                  },
+                                                );
+                                        if (!ctx.mounted) return;
+                                        setLocalState(() {
+                                          selfTesting = false;
+                                          nativeStatus = finalStatus;
+                                          selfTestHint =
+                                              finalStatus.active
+                                              ? '自检完成：原生保活工作正常（已自动停止，仅长任务运行期间开启）。'
+                                              : '自检结束（${finalStatus.summaryLabel}）；如在桌面端请用真机或开启对应权限后重试。';
+                                        });
+                                      },
+                                icon: Icon(
+                                  selfTesting
+                                      ? Icons.hourglass_top_rounded
+                                      : Icons.play_circle_outline_rounded,
+                                  size: 18,
+                                ),
+                                label: Text(
+                                  selfTesting ? '正在自检（6 秒）…' : '试运行 6 秒验证保活',
+                                ),
+                              ),
                             ],
                           ),
                         ),
@@ -248,40 +344,54 @@ class SettingsPage extends ConsumerWidget {
                     children: [
                       Row(
                         children: [
-                          Container(
-                            width: 44,
-                            height: 44,
-                            decoration: BoxDecoration(
-                              borderRadius: BorderRadius.circular(12),
-                              gradient: LinearGradient(
-                                begin: Alignment.topCenter,
-                                end: Alignment.bottomCenter,
-                                colors: [
-                                  appearance.accentColor,
-                                  appearance.accentColor.withValues(alpha: 0.72),
-                                ],
-                              ),
-                            ),
-                            child: const Icon(
-                              Icons.menu_book_rounded,
-                              color: Colors.white,
+                          ClipRRect(
+                            borderRadius: BorderRadius.circular(12),
+                            child: Image.asset(
+                              'assets/icons/app_icon.png',
+                              width: 44,
+                              height: 44,
+                              fit: BoxFit.cover,
+                              errorBuilder: (context, error, stackTrace) =>
+                                  Container(
+                                    width: 44,
+                                    height: 44,
+                                    decoration: BoxDecoration(
+                                      borderRadius: BorderRadius.circular(12),
+                                      gradient: LinearGradient(
+                                        begin: Alignment.topCenter,
+                                        end: Alignment.bottomCenter,
+                                        colors: [
+                                          appearance.accentColor,
+                                          appearance.accentColor.withValues(
+                                            alpha: 0.72,
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                    child: const Icon(
+                                      Icons.menu_book_rounded,
+                                      color: Colors.white,
+                                    ),
+                                  ),
                             ),
                           ),
                           const SizedBox(width: AppTokens.s3),
-                          Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                '织命 ZhiMing',
-                                style: Theme.of(context).textTheme.titleMedium
-                                    ?.copyWith(fontWeight: FontWeight.w700),
-                              ),
-                              Text(
-                                '本地优先的跨平台 AI 长篇小说创作工作台',
-                                style: Theme.of(context).textTheme.bodySmall
-                                    ?.copyWith(color: cs.onSurfaceVariant),
-                              ),
-                            ],
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  '织命 ZhiMing',
+                                  style: Theme.of(context).textTheme.titleMedium
+                                      ?.copyWith(fontWeight: FontWeight.w700),
+                                ),
+                                Text(
+                                  '本地优先的跨平台 AI 长篇小说创作工作台',
+                                  style: Theme.of(context).textTheme.bodySmall
+                                      ?.copyWith(color: cs.onSurfaceVariant),
+                                ),
+                              ],
+                            ),
                           ),
                         ],
                       ),

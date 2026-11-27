@@ -52,6 +52,52 @@ class BlobStore {
     }
   }
 
+  /// Temporarily moves files out of the way while [action] commits related
+  /// metadata. If the action fails, every staged file is restored.
+  Future<T> withTemporarilyRemoved<T>(
+    List<(String, String)> references,
+    Future<T> Function() action,
+  ) async {
+    final staged = <({File original, File temporary})>[];
+
+    Future<void> restoreStaged() async {
+      for (final item in staged.reversed) {
+        if (await item.temporary.exists() && !await item.original.exists()) {
+          await item.temporary.rename(item.original.path);
+        }
+      }
+    }
+
+    try {
+      for (var i = 0; i < references.length; i++) {
+        final (kind, id) = references[i];
+        final original = await _fileFor(kind, id);
+        if (!await original.exists()) continue;
+        final temporary = File(
+          '${original.path}.pending-delete-${DateTime.now().microsecondsSinceEpoch}-$i',
+        );
+        await original.rename(temporary.path);
+        staged.add((original: original, temporary: temporary));
+      }
+    } catch (error, stackTrace) {
+      await restoreStaged();
+      Error.throwWithStackTrace(error, stackTrace);
+    }
+
+    late final T result;
+    try {
+      result = await action();
+    } catch (error, stackTrace) {
+      await restoreStaged();
+      Error.throwWithStackTrace(error, stackTrace);
+    }
+
+    for (final item in staged) {
+      if (await item.temporary.exists()) await item.temporary.delete();
+    }
+    return result;
+  }
+
   /// 读取大文本尾部 maxChars 字符并尝试对齐到章节标记行起点（续写文风锚点专用）。
   /// 只从文件末尾按字节读取，避免整本数 MB 原文载入内存。
   Future<String?> loadTailAligned(
