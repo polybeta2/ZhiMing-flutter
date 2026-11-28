@@ -324,6 +324,8 @@ void main() {
           -300,
           scrollable: scrollable,
         );
+        await tester.ensureVisible(filterInSheet);
+        await flushAsyncAndPump(tester);
         await tester.tap(filterInSheet);
         await flushAsyncAndPump(tester);
         expect(ch65InSheet, findsOneWidget);

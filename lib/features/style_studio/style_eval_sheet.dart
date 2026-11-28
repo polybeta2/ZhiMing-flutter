@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -6,12 +8,14 @@ import '../../core/database/app_database.dart';
 import '../../core/llm/llm_types.dart';
 import '../../core/llm/provider_client_factory.dart';
 import '../../core/llm/stream_progress.dart';
+import '../../core/llm/token_usage_ledger.dart';
 import '../../core/prompts/prompt_library.dart';
 import '../../core/security/api_key_vault.dart';
 import '../../core/theme/design_tokens.dart';
 import '../../core/widgets/diff_preview_dialog.dart';
 import '../../core/widgets/effort_selector_bar.dart';
 import '../../core/widgets/streaming_status_chip.dart';
+import '../../core/widgets/thinking_process_card.dart';
 import '../../core/widgets/zm_widgets.dart';
 import '../../domain/models/style_models.dart';
 import '../../domain/style/style_distillation_service.dart';
@@ -111,6 +115,17 @@ class _StyleEvalSheetState extends ConsumerState<StyleEvalSheet> {
         onEvent: _progress.handle,
         cancelToken: _cancel,
       );
+      unawaited(
+        ref
+            .read(tokenUsageLedgerProvider.notifier)
+            .recordUsage(
+              usage: _progress.lastCompletedUsage,
+              category: UsageCategory.style,
+              provider: evalProvider,
+              chapterTitle: widget.chapterTitle,
+              effort: _effort,
+            ),
+      );
       if (mounted) setState(() => _result = res);
     } catch (e) {
       if (mounted) setState(() => _error = '$e');
@@ -146,6 +161,17 @@ class _StyleEvalSheetState extends ConsumerState<StyleEvalSheet> {
         maxTokens: fixProvider.maxTokens,
         onEvent: _fixProgress.handle,
         cancelToken: _fixCancel,
+      );
+      unawaited(
+        ref
+            .read(tokenUsageLedgerProvider.notifier)
+            .recordUsage(
+              usage: _fixProgress.lastCompletedUsage,
+              category: UsageCategory.style,
+              provider: fixProvider,
+              chapterTitle: widget.chapterTitle,
+              effort: _effort,
+            ),
       );
       if (!mounted) return;
       if (rewritten.isEmpty) {
@@ -218,16 +244,27 @@ class _StyleEvalSheetState extends ConsumerState<StyleEvalSheet> {
           Expanded(
             child: _running
                 ? Center(
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        StreamingStatusChip(tracker: _progress),
-                        const SizedBox(height: 10),
-                        Text(
-                          '正在按七维基准逐项体检…',
-                          style: TextStyle(color: cs.onSurfaceVariant),
-                        ),
-                      ],
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 20),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          StreamingStatusChip(tracker: _progress),
+                          const SizedBox(height: 10),
+                          Text(
+                            '正在按七维基准逐项体检…',
+                            style: TextStyle(color: cs.onSurfaceVariant),
+                          ),
+                          const SizedBox(height: 12),
+                          ConstrainedBox(
+                            constraints: const BoxConstraints(maxWidth: 520),
+                            child: ThinkingProcessCard(
+                              tracker: _progress,
+                              maxExpandedHeight: 180,
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                   )
                 : _error != null
@@ -246,6 +283,13 @@ class _StyleEvalSheetState extends ConsumerState<StyleEvalSheet> {
                     controller: scrollCtrl,
                     padding: const EdgeInsets.all(AppTokens.s4),
                     children: [
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: AppTokens.s2),
+                        child: ThinkingProcessCard(
+                          tracker: _progress,
+                          maxExpandedHeight: 160,
+                        ),
+                      ),
                       Card(
                         child: Padding(
                           padding: const EdgeInsets.all(AppTokens.s4),
@@ -292,6 +336,11 @@ class _StyleEvalSheetState extends ConsumerState<StyleEvalSheet> {
                               child: const Text('停止'),
                             ),
                           ],
+                        ),
+                        const SizedBox(height: 6),
+                        ThinkingProcessCard(
+                          tracker: _fixProgress,
+                          maxExpandedHeight: 140,
                         ),
                       ],
                       const SizedBox(height: AppTokens.s3),

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:dio/dio.dart';
@@ -12,6 +13,7 @@ import '../../core/llm/llm_json_parser.dart';
 import '../../core/llm/llm_types.dart';
 import '../../core/llm/provider_client_factory.dart';
 import '../../core/llm/stream_progress.dart';
+import '../../core/llm/token_usage_ledger.dart';
 import '../../core/prompts/prompt_library.dart';
 import '../../core/prompts/prompt_limits.dart';
 import '../../core/prompts/prompt_templates.dart';
@@ -21,6 +23,7 @@ import '../../core/utils/prompt_guard.dart';
 import '../../core/widgets/effort_selector_bar.dart';
 import '../../core/widgets/story_timeline_view.dart';
 import '../../core/widgets/streaming_status_chip.dart';
+import '../../core/widgets/thinking_process_card.dart';
 import '../../core/widgets/zm_widgets.dart';
 import '../../domain/models/novel_domain.dart';
 import '../../domain/writing/context_builder.dart';
@@ -290,6 +293,17 @@ class _OutlineListPaneState extends ConsumerState<_OutlineListPane> {
         _progress.handle(ev);
         if (ev is ContentDelta) buf.write(ev.text);
       }
+      unawaited(
+        ref
+            .read(tokenUsageLedgerProvider.notifier)
+            .recordUsage(
+              usage: _progress.lastCompletedUsage,
+              category: UsageCategory.outline,
+              provider: provider,
+              novelId: widget.novelId,
+              effort: _batchEffort,
+            ),
+      );
       final parsed = LLMJSONParser.decodeList<Map<String, dynamic>>(
         buf.toString(),
         (e) => e is Map ? Map<String, dynamic>.from(e) : <String, dynamic>{},
@@ -373,21 +387,34 @@ class _OutlineListPaneState extends ConsumerState<_OutlineListPane> {
                 horizontal: AppTokens.s4,
                 vertical: 6,
               ),
-              child: Row(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                mainAxisSize: MainAxisSize.min,
                 children: [
-                  StreamingStatusChip(tracker: _progress),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      _batchLabel,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: Theme.of(context).textTheme.bodySmall,
-                    ),
+                  Row(
+                    children: [
+                      StreamingStatusChip(tracker: _progress),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          _batchLabel,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: Theme.of(context).textTheme.bodySmall,
+                        ),
+                      ),
+                      TextButton(
+                        onPressed: () => _cancel?.cancel(),
+                        child: const Text('停止'),
+                      ),
+                    ],
                   ),
-                  TextButton(
-                    onPressed: () => _cancel?.cancel(),
-                    child: const Text('停止'),
+                  Padding(
+                    padding: const EdgeInsets.only(top: 6),
+                    child: ThinkingProcessCard(
+                      tracker: _progress,
+                      maxExpandedHeight: 120,
+                    ),
                   ),
                 ],
               ),
@@ -783,6 +810,17 @@ class _VolumeEditDialogState extends ConsumerState<_VolumeEditDialog> {
         _progress.handle(ev);
         if (ev is ContentDelta) buf.write(ev.text);
       }
+      unawaited(
+        ref
+            .read(tokenUsageLedgerProvider.notifier)
+            .recordUsage(
+              usage: _progress.lastCompletedUsage,
+              category: UsageCategory.outline,
+              provider: provider,
+              novelId: widget.novelId,
+              effort: _effort,
+            ),
+      );
       _applyAiOutput(buf.toString());
     } catch (e) {
       if (mounted) showZmSnackBar(context, 'AI 生成失败：$e', isError: true);
@@ -925,6 +963,11 @@ class _VolumeEditDialogState extends ConsumerState<_VolumeEditDialog> {
                             child: const Text('停止'),
                           ),
                         ],
+                      ),
+                      const SizedBox(height: 6),
+                      ThinkingProcessCard(
+                        tracker: _progress,
+                        maxExpandedHeight: 130,
                       ),
                     ],
                     const SizedBox(height: 10),
@@ -1161,6 +1204,17 @@ class _ChapterOutlineEditDialogState
         _progress.handle(ev);
         if (ev is ContentDelta) buf.write(ev.text);
       }
+      unawaited(
+        ref
+            .read(tokenUsageLedgerProvider.notifier)
+            .recordUsage(
+              usage: _progress.lastCompletedUsage,
+              category: UsageCategory.outline,
+              provider: provider,
+              novelId: widget.novelId,
+              effort: _effort,
+            ),
+      );
       final raw = buf.toString();
       final fenceRe = RegExp(r'```zm-scene\s*([\s\S]*?)```');
       final match = fenceRe.firstMatch(raw);
@@ -1272,6 +1326,11 @@ class _ChapterOutlineEditDialogState
                             child: const Text('停止'),
                           ),
                         ],
+                      ),
+                      const SizedBox(height: 6),
+                      ThinkingProcessCard(
+                        tracker: _progress,
+                        maxExpandedHeight: 130,
                       ),
                     ],
                     const SizedBox(height: 10),

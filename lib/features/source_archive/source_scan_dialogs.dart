@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:drift/drift.dart' show Value;
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
@@ -9,6 +11,7 @@ import 'package:uuid/uuid.dart';
 import '../../core/database/app_database.dart';
 import '../../core/llm/llm_types.dart';
 import '../../core/llm/provider_client_factory.dart';
+import '../../core/llm/token_usage_ledger.dart';
 import '../../core/platform/background_keep_alive.dart';
 import '../../core/security/api_key_vault.dart';
 import '../../core/storage/blob_store.dart';
@@ -16,6 +19,7 @@ import '../../core/theme/design_tokens.dart';
 import '../../core/utils/text_encoding.dart';
 import '../../core/widgets/effort_selector_bar.dart';
 import '../../core/widgets/streaming_status_chip.dart';
+import '../../core/widgets/thinking_process_card.dart';
 import '../../core/widgets/zm_widgets.dart';
 import '../../domain/models/source_profile_models.dart';
 import '../../domain/source/novel_text_cleaner.dart';
@@ -95,6 +99,9 @@ class _SourceScanProgressDialogState
   ProviderRecord? _fastProvider;
   String? _activeProfileId;
   ReasoningEffort? _effortOverride;
+  int _loggedScanIn = 0;
+  int _loggedScanCached = 0;
+  int _loggedScanOut = 0;
 
   @override
   void initState() {
@@ -163,11 +170,41 @@ class _SourceScanProgressDialogState
         isContinuation: widget.isContinuation,
         presetProfileId: _activeProfileId,
       );
+      _flushScanUsageDelta();
     } catch (e) {
       if (mounted) {
         showZmSnackBar(context, '初始化模型失败：$e', isError: true);
       }
     }
+  }
+
+  void _flushScanUsageDelta() {
+    final ctrl = _ctrl;
+    if (ctrl == null) return;
+    final deltaIn = (ctrl.tokensIn - _loggedScanIn).clamp(0, 1 << 30);
+    final deltaCached = (ctrl.cachedTokens - _loggedScanCached).clamp(
+      0,
+      1 << 30,
+    );
+    final deltaOut = (ctrl.tokensOut - _loggedScanOut).clamp(0, 1 << 30);
+    if (deltaIn == 0 && deltaOut == 0 && deltaCached == 0) return;
+    _loggedScanIn = ctrl.tokensIn;
+    _loggedScanCached = ctrl.cachedTokens;
+    _loggedScanOut = ctrl.tokensOut;
+    unawaited(
+      ref
+          .read(tokenUsageLedgerProvider.notifier)
+          .recordRaw(
+            category: UsageCategory.sourceScan,
+            providerName: _provider.name,
+            modelName: _provider.modelName,
+            promptTokens: deltaIn,
+            cachedTokens: deltaCached,
+            completionTokens: deltaOut,
+            chapterTitle: widget.title,
+            effort: _effortOverride?.label,
+          ),
+    );
   }
 
   void _onTick() {
@@ -359,6 +396,11 @@ class _SourceScanProgressDialogState
             if (ctrl != null && isRunning) ...[
               const SizedBox(height: 10),
               StreamingStatusChip(tracker: ctrl.progress),
+              const SizedBox(height: 6),
+              ThinkingProcessCard(
+                tracker: ctrl.progress,
+                maxExpandedHeight: 130,
+              ),
               if (defaultTargetPlatform == TargetPlatform.iOS) ...[
                 const SizedBox(height: 6),
                 Builder(

@@ -9,6 +9,7 @@ import 'package:share_plus/share_plus.dart';
 
 import '../../core/database/novel_repository.dart';
 import '../../core/theme/design_tokens.dart';
+import '../../core/widgets/token_usage_dashboard.dart';
 import '../../core/widgets/zm_widgets.dart';
 import '../../domain/models/novel_domain.dart';
 import '../../domain/tools/export_service.dart';
@@ -159,6 +160,8 @@ class _StatsAndExportSheetState extends ConsumerState<StatsAndExportSheet> {
                       ),
                     ],
                   ),
+                  const SizedBox(height: AppTokens.s4),
+                  TokenUsageDashboardCard(novelId: widget.novelId),
                   const SizedBox(height: AppTokens.s4),
                   Card(
                     child: Padding(

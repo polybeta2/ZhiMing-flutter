@@ -13,6 +13,7 @@ import '../../core/database/novel_repository.dart';
 import '../../core/llm/llm_types.dart';
 import '../../core/llm/provider_client_factory.dart';
 import '../../core/llm/stream_progress.dart';
+import '../../core/llm/token_usage_ledger.dart';
 import '../../core/prompts/prompt_library.dart';
 import '../../core/prompts/prompt_limits.dart';
 import '../../core/prompts/prompt_templates.dart';
@@ -22,6 +23,7 @@ import '../../core/theme/design_tokens.dart';
 import '../../core/utils/prompt_guard.dart';
 import '../../core/widgets/effort_selector_bar.dart';
 import '../../core/widgets/streaming_status_chip.dart';
+import '../../core/widgets/thinking_process_card.dart';
 import '../../core/widgets/zm_widgets.dart';
 import '../../domain/creation/creation_session_engine.dart';
 import '../../domain/models/blueprint_models.dart';
@@ -93,6 +95,8 @@ class _AssistantChatViewState extends ConsumerState<AssistantChatView> {
   AssistantPatch? _pendingPatch;
   List<String> _pendingPatchLines = const [];
   CancelToken? _cancel;
+  final Map<String, ({String text, double seconds, UsageReport? usage})>
+  _messageThinkings = {};
 
   bool get _isCreation => _thread?.purpose == 'creation';
 
@@ -200,14 +204,28 @@ class _AssistantChatViewState extends ConsumerState<AssistantChatView> {
   ProviderRecord? get _activeProvider =>
       _sessionProvider ?? ref.read(defaultProviderProvider);
 
-  Future<void> _appendMessage(String role, String content) async {
+  Future<String?> _appendMessage(
+    String role,
+    String content, {
+    String? thinkingText,
+    double thinkingSeconds = 0,
+    UsageReport? usage,
+  }) async {
     final thread = _thread;
-    if (thread == null || content.trim().isEmpty) return;
+    if (thread == null || content.trim().isEmpty) return null;
+    final id = _uuid.v4();
+    if (thinkingText != null && thinkingText.trim().isNotEmpty) {
+      _messageThinkings[id] = (
+        text: thinkingText,
+        seconds: thinkingSeconds,
+        usage: usage,
+      );
+    }
     await ref
         .read(appDatabaseProvider)
         .insertChatMessage(
           ChatMessagesCompanion.insert(
-            id: _uuid.v4(),
+            id: id,
             threadId: thread.id,
             role: role,
             content: content.trim(),
@@ -215,6 +233,7 @@ class _AssistantChatViewState extends ConsumerState<AssistantChatView> {
           ),
         );
     _scrollToBottom();
+    return id;
   }
 
   void _scrollToBottom() {
@@ -424,6 +443,23 @@ class _AssistantChatViewState extends ConsumerState<AssistantChatView> {
       }
       if (_cancel?.isCancelled ?? false) return;
 
+      final turnUsage = _progress.lastCompletedUsage;
+      final turnThinking = _progress.lastCompletedReasoningText;
+      final turnThinkingSec = _progress.lastCompletedThinkingSeconds;
+      if (turnUsage != null) {
+        unawaited(
+          ref
+              .read(tokenUsageLedgerProvider.notifier)
+              .recordUsage(
+                usage: turnUsage,
+                category: UsageCategory.assistant,
+                provider: provider,
+                novelId: widget.novelId,
+                effort: _sessionEffort,
+              ),
+        );
+      }
+
       final outcome = engine.settle(
         kind: kind,
         raw: raw.toString(),
@@ -435,7 +471,13 @@ class _AssistantChatViewState extends ConsumerState<AssistantChatView> {
         setState(() => _error = outcome.error);
       }
       if (outcome.message != null) {
-        await _appendMessage('assistant', outcome.message!);
+        await _appendMessage(
+          'assistant',
+          outcome.message!,
+          thinkingText: turnThinking,
+          thinkingSeconds: turnThinkingSec,
+          usage: turnUsage,
+        );
       }
 
       if (mounted) {
@@ -591,7 +633,11 @@ class _AssistantChatViewState extends ConsumerState<AssistantChatView> {
       var finalText = '';
 
       // 最多支持 2 轮本地按需查书（zm-search），每轮 <30ms，字节级复用静态前缀命中 KV Cache
+      final thinkingParts = <String>[];
+      var totalThinkSec = 0.0;
+      UsageReport? lastTurnUsage;
       for (var searchRound = 0; searchRound <= 2; searchRound++) {
+        if (searchRound > 0) _progress.begin();
         final buf = StringBuffer();
         await for (final ev in client.streamChat(
           activeMsgs,
@@ -607,6 +653,25 @@ class _AssistantChatViewState extends ConsumerState<AssistantChatView> {
             buf.write(ev.text);
             if (mounted) setState(() => _streamingBuffer = buf.toString());
           }
+        }
+        final roundUsage = _progress.lastCompletedUsage;
+        if (roundUsage != null) {
+          lastTurnUsage = roundUsage;
+          unawaited(
+            ref
+                .read(tokenUsageLedgerProvider.notifier)
+                .recordUsage(
+                  usage: roundUsage,
+                  category: UsageCategory.assistant,
+                  provider: provider,
+                  novelId: widget.novelId,
+                  effort: _sessionEffort,
+                ),
+          );
+        }
+        if (_progress.lastCompletedReasoningText.trim().isNotEmpty) {
+          thinkingParts.add(_progress.lastCompletedReasoningText.trim());
+          totalThinkSec += _progress.lastCompletedThinkingSeconds;
         }
         if (_cancel?.isCancelled ?? false) return;
 
@@ -634,6 +699,7 @@ class _AssistantChatViewState extends ConsumerState<AssistantChatView> {
         break;
       }
 
+      final mergedThinking = thinkingParts.join('\n\n---\n\n');
       if (finalText.isNotEmpty) {
         if (_accessMode == AssistantAccessMode.readWrite) {
           final extracted = AssistantPatch.extract(finalText);
@@ -642,6 +708,9 @@ class _AssistantChatViewState extends ConsumerState<AssistantChatView> {
             extracted.cleanedText.isEmpty
                 ? '已生成设定变更提案，请审阅下方卡片：'
                 : extracted.cleanedText,
+            thinkingText: mergedThinking,
+            thinkingSeconds: totalThinkSec,
+            usage: lastTurnUsage,
           );
           if (extracted.patch != null) {
             final latestBundle = await repo.loadBundle(widget.novelId);
@@ -653,7 +722,13 @@ class _AssistantChatViewState extends ConsumerState<AssistantChatView> {
             }
           }
         } else {
-          await _appendMessage('assistant', finalText);
+          await _appendMessage(
+            'assistant',
+            finalText,
+            thinkingText: mergedThinking,
+            thinkingSeconds: totalThinkSec,
+            usage: lastTurnUsage,
+          );
         }
       }
     } catch (e) {
@@ -869,7 +944,16 @@ class _AssistantChatViewState extends ConsumerState<AssistantChatView> {
                         );
                       }
                       final m = msgs[idx];
-                      return _Bubble(isUser: m.role == 'user', text: m.content);
+                      final thinking = m.role == 'user'
+                          ? null
+                          : _messageThinkings[m.id];
+                      return _Bubble(
+                        isUser: m.role == 'user',
+                        text: m.content,
+                        thinkingText: thinking?.text,
+                        thinkingSeconds: thinking?.seconds ?? 0,
+                        thinkingUsage: thinking?.usage,
+                      );
                     },
                   ),
                 ),
@@ -976,17 +1060,36 @@ class _AssistantChatViewState extends ConsumerState<AssistantChatView> {
         if (_streaming || _error != null)
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
-            child: Row(
-              children: [
-                if (_streaming) StreamingStatusChip(tracker: _progress),
-                if (_error != null)
-                  Expanded(
-                    child: Text(
-                      _error!,
-                      style: TextStyle(fontSize: 12, color: cs.error),
+            child: Center(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 820),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Row(
+                      children: [
+                        if (_streaming) StreamingStatusChip(tracker: _progress),
+                        if (_error != null)
+                          Expanded(
+                            child: Text(
+                              _error!,
+                              style: TextStyle(fontSize: 12, color: cs.error),
+                            ),
+                          ),
+                      ],
                     ),
-                  ),
-              ],
+                    if (_streaming)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 6),
+                        child: ThinkingProcessCard(
+                          tracker: _progress,
+                          maxExpandedHeight: 150,
+                        ),
+                      ),
+                  ],
+                ),
+              ),
             ),
           ),
 
@@ -1073,9 +1176,18 @@ class _AssistantChatViewState extends ConsumerState<AssistantChatView> {
 }
 
 class _Bubble extends StatelessWidget {
-  const _Bubble({required this.isUser, required this.text});
+  const _Bubble({
+    required this.isUser,
+    required this.text,
+    this.thinkingText,
+    this.thinkingSeconds = 0,
+    this.thinkingUsage,
+  });
   final bool isUser;
   final String text;
+  final String? thinkingText;
+  final double thinkingSeconds;
+  final UsageReport? thinkingUsage;
 
   @override
   Widget build(BuildContext context) {
@@ -1085,29 +1197,50 @@ class _Bubble extends StatelessWidget {
         ? cs.primary.withValues(alpha: isDark ? 0.72 : 0.92)
         : cs.surfaceContainerHighest.withValues(alpha: isDark ? 0.65 : 0.75);
     final fg = isUser ? cs.onPrimary : cs.onSurface;
+    final hasThinking = !isUser && (thinkingText?.trim().isNotEmpty ?? false);
 
     return Align(
       alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
-      child: Container(
+      child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 620),
-        margin: const EdgeInsets.only(bottom: 10),
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-        decoration: BoxDecoration(
-          color: bg,
-          borderRadius: BorderRadius.only(
-            topLeft: const Radius.circular(AppTokens.radiusBubble),
-            topRight: const Radius.circular(AppTokens.radiusBubble),
-            bottomLeft: Radius.circular(
-              isUser ? AppTokens.radiusBubble : AppTokens.radiusTail,
+        child: Column(
+          crossAxisAlignment: isUser
+              ? CrossAxisAlignment.end
+              : CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (hasThinking)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 6),
+                child: ThinkingProcessCard(
+                  staticText: thinkingText,
+                  staticElapsedSeconds: thinkingSeconds,
+                  staticUsage: thinkingUsage,
+                  maxExpandedHeight: 160,
+                ),
+              ),
+            Container(
+              margin: const EdgeInsets.only(bottom: 10),
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+              decoration: BoxDecoration(
+                color: bg,
+                borderRadius: BorderRadius.only(
+                  topLeft: const Radius.circular(AppTokens.radiusBubble),
+                  topRight: const Radius.circular(AppTokens.radiusBubble),
+                  bottomLeft: Radius.circular(
+                    isUser ? AppTokens.radiusBubble : AppTokens.radiusTail,
+                  ),
+                  bottomRight: Radius.circular(
+                    isUser ? AppTokens.radiusTail : AppTokens.radiusBubble,
+                  ),
+                ),
+              ),
+              child: SelectableText(
+                text,
+                style: TextStyle(color: fg, fontSize: 14, height: 1.55),
+              ),
             ),
-            bottomRight: Radius.circular(
-              isUser ? AppTokens.radiusTail : AppTokens.radiusBubble,
-            ),
-          ),
-        ),
-        child: SelectableText(
-          text,
-          style: TextStyle(color: fg, fontSize: 14, height: 1.55),
+          ],
         ),
       ),
     );

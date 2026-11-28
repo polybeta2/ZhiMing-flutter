@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -14,6 +15,7 @@ import '../../core/database/novel_repository.dart';
 import '../../core/llm/llm_types.dart';
 import '../../core/llm/provider_client_factory.dart';
 import '../../core/llm/stream_progress.dart';
+import '../../core/llm/token_usage_ledger.dart';
 import '../../core/platform/background_keep_alive.dart';
 import '../../core/prompts/prompt_library.dart';
 import '../../core/security/api_key_vault.dart';
@@ -21,6 +23,7 @@ import '../../core/theme/design_tokens.dart';
 import '../../core/utils/text_encoding.dart';
 import '../../core/widgets/effort_selector_bar.dart';
 import '../../core/widgets/streaming_status_chip.dart';
+import '../../core/widgets/thinking_process_card.dart';
 import '../../core/widgets/zm_widgets.dart';
 import '../../domain/models/style_models.dart';
 import '../../domain/style/style_card_renderer.dart';
@@ -551,6 +554,18 @@ class _StyleDistillSheetState extends ConsumerState<_StyleDistillSheet> {
             if (mounted) setState(() => _stageText = label);
           case StyleDistillStreamDelta(:final event):
             _progress.handle(event);
+            if (event is UsageReport) {
+              unawaited(
+                ref
+                    .read(tokenUsageLedgerProvider.notifier)
+                    .recordUsage(
+                      usage: event,
+                      category: UsageCategory.style,
+                      provider: provider,
+                      effort: _effort,
+                    ),
+              );
+            }
           case StyleDistillAnalysisReady(:final rawAnalysisJson):
             await db.saveStyleDistillCache(
               jsonEncode({
@@ -717,6 +732,8 @@ class _StyleDistillSheetState extends ConsumerState<_StyleDistillSheet> {
                 ),
               ],
             ),
+            const SizedBox(height: 6),
+            ThinkingProcessCard(tracker: _progress, maxExpandedHeight: 140),
           ],
           if (_error != null) ...[
             const SizedBox(height: 10),

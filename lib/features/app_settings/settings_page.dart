@@ -3,11 +3,13 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../core/llm/provider_client_factory.dart';
+import '../../core/llm/token_usage_ledger.dart';
 import '../../core/platform/background_keep_alive.dart';
 import '../../core/prompts/prompt_defaults.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/theme/design_tokens.dart';
 import '../../core/widgets/effort_selector_bar.dart';
+import '../../core/widgets/token_usage_dashboard.dart';
 import '../../core/widgets/zm_widgets.dart';
 
 /// 设置页：Kelivo 分组卡片（模型与服务 / 外观与编辑器 / 开发者工坊 / 关于）
@@ -426,6 +428,8 @@ class SettingsPage extends ConsumerWidget {
     final fastToolProviderId = ref.watch(fastToolProviderIdProvider);
     final fastProvider = ref.watch(fastToolProviderProvider);
     final reasoningPref = ref.watch(reasoningPreferenceProvider);
+    final usageLedger = ref.watch(tokenUsageLedgerProvider);
+    final globalUsage = usageLedger.summarize();
     final hasCustomFastTool =
         fastToolProviderId != null &&
         providers.any((p) => p.id == fastToolProviderId) &&
@@ -506,6 +510,31 @@ class SettingsPage extends ConsumerWidget {
                   ),
                   trailing: const Icon(Icons.chevron_right),
                   onTap: () => _openReasoningPreferenceDialog(context, ref),
+                ),
+              ),
+              const SizedBox(height: AppTokens.s2),
+              Card(
+                child: ListTile(
+                  leading: const ZmSettingsIcon(
+                    icon: Icons.insights_rounded,
+                    tint: Colors.teal,
+                  ),
+                  title: const Text(
+                    'Token 消耗与 KV 缓存账单',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  subtitle: Text(
+                    globalUsage.requests == 0
+                        ? '暂无调用记录 · 支持自定义单价与缓存节省估算'
+                        : '累计 ${TokenUsageSummary.formatTokenCount(globalUsage.totalTokens)} tok'
+                              ' · 缓存 ${(globalUsage.cacheHitRate * 100).round()}%'
+                              ' · 预估 ${usageLedger.pricing.formatMoney(globalUsage.estimatedCost)}',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () => showTokenUsageSheet(context),
                 ),
               ),
               const SizedBox(height: AppTokens.s5),

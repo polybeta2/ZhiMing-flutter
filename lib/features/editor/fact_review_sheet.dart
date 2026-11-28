@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -6,12 +8,14 @@ import '../../core/database/app_database.dart';
 import '../../core/llm/llm_types.dart';
 import '../../core/llm/provider_client_factory.dart';
 import '../../core/llm/stream_progress.dart';
+import '../../core/llm/token_usage_ledger.dart';
 import '../../core/prompts/prompt_library.dart';
 import '../../core/security/api_key_vault.dart';
 import '../../core/theme/design_tokens.dart';
 import '../../core/widgets/diff_preview_dialog.dart';
 import '../../core/widgets/effort_selector_bar.dart';
 import '../../core/widgets/streaming_status_chip.dart';
+import '../../core/widgets/thinking_process_card.dart';
 import '../../core/widgets/zm_widgets.dart';
 import '../../domain/writing/fact_review_service.dart';
 
@@ -26,6 +30,8 @@ class FactReviewSheet extends ConsumerStatefulWidget {
     required this.chapterTitle,
     required this.truthArchive,
     required this.provider,
+    this.novelId,
+    this.chapterId,
     this.initialEffort,
     this.onApply,
   });
@@ -34,6 +40,8 @@ class FactReviewSheet extends ConsumerStatefulWidget {
   final String chapterTitle;
   final String truthArchive;
   final ProviderRecord provider;
+  final String? novelId;
+  final String? chapterId;
   final ReasoningEffort? initialEffort;
   final Future<void> Function(String fixedText)? onApply;
 
@@ -110,7 +118,23 @@ class _FactReviewSheetState extends ConsumerState<FactReviewSheet> {
     } catch (e) {
       if (mounted) setState(() => _error = '$e');
     } finally {
+      final usage = _progress.lastCompletedUsage;
       _progress.finish();
+      if (usage != null) {
+        unawaited(
+          ref
+              .read(tokenUsageLedgerProvider.notifier)
+              .recordUsage(
+                usage: usage,
+                category: UsageCategory.factReview,
+                provider: widget.provider,
+                novelId: widget.novelId,
+                chapterId: widget.chapterId,
+                chapterTitle: widget.chapterTitle,
+                effort: _effort,
+              ),
+        );
+      }
       if (mounted) setState(() => _running = false);
     }
   }
@@ -171,7 +195,23 @@ class _FactReviewSheetState extends ConsumerState<FactReviewSheet> {
     } catch (e) {
       if (mounted) showZmSnackBar(context, '定点修复失败：$e', isError: true);
     } finally {
+      final usage = _fixProgress.lastCompletedUsage;
       _fixProgress.finish();
+      if (usage != null) {
+        unawaited(
+          ref
+              .read(tokenUsageLedgerProvider.notifier)
+              .recordUsage(
+                usage: usage,
+                category: UsageCategory.factReview,
+                provider: widget.provider,
+                novelId: widget.novelId,
+                chapterId: widget.chapterId,
+                chapterTitle: widget.chapterTitle,
+                effort: _effort,
+              ),
+        );
+      }
       if (mounted) setState(() => _fixing = false);
     }
   }
@@ -220,16 +260,27 @@ class _FactReviewSheetState extends ConsumerState<FactReviewSheet> {
           Expanded(
             child: _running
                 ? Center(
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        StreamingStatusChip(tracker: _progress),
-                        const SizedBox(height: 10),
-                        Text(
-                          '正在对照真相档案核查 5 维事实与连续性…',
-                          style: TextStyle(color: cs.onSurfaceVariant),
-                        ),
-                      ],
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 20),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          StreamingStatusChip(tracker: _progress),
+                          const SizedBox(height: 10),
+                          Text(
+                            '正在对照真相档案核查 5 维事实与连续性…',
+                            style: TextStyle(color: cs.onSurfaceVariant),
+                          ),
+                          const SizedBox(height: 12),
+                          ConstrainedBox(
+                            constraints: const BoxConstraints(maxWidth: 520),
+                            child: ThinkingProcessCard(
+                              tracker: _progress,
+                              maxExpandedHeight: 200,
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                   )
                 : _error != null
@@ -274,6 +325,13 @@ class _FactReviewSheetState extends ConsumerState<FactReviewSheet> {
       controller: scrollCtrl,
       padding: const EdgeInsets.all(AppTokens.s4),
       children: [
+        Padding(
+          padding: const EdgeInsets.only(bottom: AppTokens.s2),
+          child: ThinkingProcessCard(
+            tracker: _progress,
+            maxExpandedHeight: 180,
+          ),
+        ),
         // 1) 总览卡
         Card(
           child: Padding(
@@ -333,6 +391,11 @@ class _FactReviewSheetState extends ConsumerState<FactReviewSheet> {
                         child: const Text('停止'),
                       ),
                     ],
+                  ),
+                  const SizedBox(height: 6),
+                  ThinkingProcessCard(
+                    tracker: _fixProgress,
+                    maxExpandedHeight: 140,
                   ),
                 ],
               ],

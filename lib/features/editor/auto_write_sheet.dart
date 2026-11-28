@@ -11,6 +11,7 @@ import '../../core/database/novel_repository.dart';
 import '../../core/llm/llm_types.dart';
 import '../../core/llm/provider_client_factory.dart';
 import '../../core/llm/stream_progress.dart';
+import '../../core/llm/token_usage_ledger.dart';
 import '../../core/platform/background_keep_alive.dart';
 import '../../core/prompts/prompt_library.dart';
 import '../../core/prompts/prompt_limits.dart';
@@ -19,6 +20,7 @@ import '../../core/security/api_key_vault.dart';
 import '../../core/theme/design_tokens.dart';
 import '../../core/widgets/effort_selector_bar.dart';
 import '../../core/widgets/streaming_status_chip.dart';
+import '../../core/widgets/thinking_process_card.dart';
 import '../../domain/models/novel_domain.dart';
 import '../../domain/writing/chapter_ledger.dart';
 import '../../domain/writing/context_builder.dart';
@@ -224,6 +226,19 @@ class _AutoWriteSheetState extends ConsumerState<AutoWriteSheet> {
           _progress.handle(ev);
           if (ev is ContentDelta) draftBuf.write(ev.text);
         }
+        unawaited(
+          ref
+              .read(tokenUsageLedgerProvider.notifier)
+              .recordUsage(
+                usage: _progress.lastCompletedUsage,
+                category: UsageCategory.writing,
+                provider: provider,
+                novelId: widget.novelId,
+                chapterId: freshCh.chapter.id,
+                chapterTitle: freshCh.chapter.title,
+                effort: _effort,
+              ),
+        );
         if (_cancel?.isCancelled ?? false) break;
 
         var draft = draftBuf.toString().trim();
@@ -261,6 +276,19 @@ class _AutoWriteSheetState extends ConsumerState<AutoWriteSheet> {
               onEvent: _progress.handle,
               cancelToken: _cancel,
             );
+            unawaited(
+              ref
+                  .read(tokenUsageLedgerProvider.notifier)
+                  .recordUsage(
+                    usage: _progress.lastCompletedUsage,
+                    category: UsageCategory.factReview,
+                    provider: toolProvider,
+                    novelId: widget.novelId,
+                    chapterId: freshCh.chapter.id,
+                    chapterTitle: freshCh.chapter.title,
+                    effort: _effort,
+                  ),
+            );
             if (_cancel?.isCancelled ?? false) break;
             if (reviewRes.hasBlocking) {
               fixedBlockingCount = reviewRes.blockingIssues.length;
@@ -278,6 +306,19 @@ class _AutoWriteSheetState extends ConsumerState<AutoWriteSheet> {
                 maxTokens: toolProvider.maxTokens,
                 onEvent: _progress.handle,
                 cancelToken: _cancel,
+              );
+              unawaited(
+                ref
+                    .read(tokenUsageLedgerProvider.notifier)
+                    .recordUsage(
+                      usage: _progress.lastCompletedUsage,
+                      category: UsageCategory.factReview,
+                      provider: toolProvider,
+                      novelId: widget.novelId,
+                      chapterId: freshCh.chapter.id,
+                      chapterTitle: freshCh.chapter.title,
+                      effort: _effort,
+                    ),
               );
               if (_cancel?.isCancelled ?? false) break;
               if (fixed.length >= 200) {
@@ -348,6 +389,19 @@ class _AutoWriteSheetState extends ConsumerState<AutoWriteSheet> {
           _progress.handle(ev);
           if (ev is ContentDelta) rawSum.write(ev.text);
         }
+        unawaited(
+          ref
+              .read(tokenUsageLedgerProvider.notifier)
+              .recordUsage(
+                usage: _progress.lastCompletedUsage,
+                category: UsageCategory.summary,
+                provider: toolProvider,
+                novelId: widget.novelId,
+                chapterId: freshCh.chapter.id,
+                chapterTitle: freshCh.chapter.title,
+                effort: ReasoningEffort.none,
+              ),
+        );
         if (_cancel?.isCancelled ?? false) break;
 
         final extraction = ChapterLedgerExtraction.tryParse(rawSum.toString());
@@ -539,6 +593,8 @@ class _AutoWriteSheetState extends ConsumerState<AutoWriteSheet> {
             if (_running) ...[
               const SizedBox(height: 8),
               StreamingStatusChip(tracker: _progress),
+              const SizedBox(height: 6),
+              ThinkingProcessCard(tracker: _progress, maxExpandedHeight: 130),
             ],
           ],
           if (_error != null) ...[

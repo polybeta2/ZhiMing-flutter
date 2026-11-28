@@ -14,6 +14,7 @@ import '../../core/database/novel_repository.dart';
 import '../../core/llm/llm_types.dart';
 import '../../core/llm/provider_client_factory.dart';
 import '../../core/llm/stream_progress.dart';
+import '../../core/llm/token_usage_ledger.dart';
 import '../../core/prompts/prompt_library.dart';
 import '../../core/prompts/prompt_limits.dart';
 import '../../core/prompts/prompt_templates.dart';
@@ -24,6 +25,7 @@ import '../../core/utils/prompt_guard.dart';
 import '../../core/widgets/diff_preview_dialog.dart';
 import '../../core/widgets/effort_selector_bar.dart';
 import '../../core/widgets/streaming_status_chip.dart';
+import '../../core/widgets/thinking_process_card.dart';
 import '../../core/widgets/zm_widgets.dart';
 import '../../domain/models/novel_domain.dart';
 import '../../domain/writing/chapter_ledger.dart';
@@ -792,7 +794,25 @@ class _ChapterEditorWidgetState extends ConsumerState<ChapterEditorWidget> {
     } catch (e) {
       if (mounted) setState(() => _aiError = '$e');
     } finally {
+      final usage = _draftProgress.lastCompletedUsage;
       _draftProgress.finish();
+      if (usage != null) {
+        unawaited(
+          ref
+              .read(tokenUsageLedgerProvider.notifier)
+              .recordUsage(
+                usage: usage,
+                category: _lastRewrite != null
+                    ? UsageCategory.rewrite
+                    : UsageCategory.writing,
+                provider: provider,
+                novelId: widget.novelId,
+                chapterId: _chapter?.id,
+                chapterTitle: _chapter?.title,
+                effort: effortOverride ?? _sessionEffort,
+              ),
+        );
+      }
       await _disableWakelockSafely();
       if (mounted) setState(() => _streaming = false);
     }
@@ -1061,7 +1081,23 @@ class _ChapterEditorWidgetState extends ConsumerState<ChapterEditorWidget> {
     } catch (e) {
       if (mounted) showZmSnackBar(context, '建档失败：$e', isError: true);
     } finally {
+      final usage = _summaryProgress.lastCompletedUsage;
       _summaryProgress.finish();
+      if (usage != null) {
+        unawaited(
+          ref
+              .read(tokenUsageLedgerProvider.notifier)
+              .recordUsage(
+                usage: usage,
+                category: UsageCategory.summary,
+                provider: provider,
+                novelId: widget.novelId,
+                chapterId: _chapter?.id,
+                chapterTitle: _chapter?.title,
+                effort: _sessionEffort ?? ReasoningEffort.none,
+              ),
+        );
+      }
       if (mounted) setState(() => _summarizing = false);
     }
   }
@@ -1110,6 +1146,8 @@ class _ChapterEditorWidgetState extends ConsumerState<ChapterEditorWidget> {
         chapterTitle: ch.title,
         truthArchive: truthArchive,
         provider: provider,
+        novelId: widget.novelId,
+        chapterId: ch.id,
         initialEffort: _sessionEffort,
         onApply: (fixedText) async {
           await repo.takeSnapshot(
@@ -1653,6 +1691,13 @@ class _ChapterEditorWidgetState extends ConsumerState<ChapterEditorWidget> {
                               ),
                             ],
                           ),
+                          Padding(
+                            padding: const EdgeInsets.only(top: 6),
+                            child: ThinkingProcessCard(
+                              tracker: _summaryProgress,
+                              maxExpandedHeight: 110,
+                            ),
+                          ),
                           const SizedBox(height: 6),
                         ],
                         Wrap(
@@ -1770,7 +1815,7 @@ class _ChapterEditorWidgetState extends ConsumerState<ChapterEditorWidget> {
 
   Widget _buildDraftCard(ColorScheme cs) {
     return Container(
-      constraints: const BoxConstraints(maxHeight: 280),
+      constraints: const BoxConstraints(maxHeight: 360),
       margin: const EdgeInsets.all(10),
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
@@ -1832,6 +1877,13 @@ class _ChapterEditorWidgetState extends ConsumerState<ChapterEditorWidget> {
                 style: TextStyle(fontSize: 12, color: cs.error),
               ),
             ),
+          Padding(
+            padding: const EdgeInsets.only(top: 6),
+            child: ThinkingProcessCard(
+              tracker: _draftProgress,
+              maxExpandedHeight: 148,
+            ),
+          ),
           const SizedBox(height: 8),
           Expanded(
             child: SingleChildScrollView(
