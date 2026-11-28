@@ -204,6 +204,8 @@ void main() {
           -200,
           scrollable: find.byType(Scrollable).last,
         );
+        await tester.ensureVisible(find.text('后台保活（iOS）'));
+        await flushAsyncAndPump(tester);
         await tester.tap(find.text('后台保活（iOS）'));
         await flushAsyncAndPump(tester);
         expect(

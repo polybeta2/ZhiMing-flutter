@@ -316,32 +316,31 @@ class SourceScanController extends ChangeNotifier {
       notifyListeners();
 
       // 推理模型安全预算 + 结构化 JSON / 提示词缓存控制
+      // 结构化 Map 抽取统一关闭思考（提速 2.8x 且避免思考链占满输出上限）；Reduce 跟随客户端默认推理设置
       const mapSingleConfig = GenerationConfig(
         temperature: 0.2,
-        maxTokens: 12288,
+        maxTokens: 16384,
         jsonMode: true,
-        reasoningEffort: ReasoningEffort.low,
+        reasoningEffort: ReasoningEffort.none,
         enablePromptCacheControl: true,
       );
       const mapBatchConfig = GenerationConfig(
         temperature: 0.2,
-        maxTokens: 12288,
+        maxTokens: 16384,
         jsonMode: false,
-        reasoningEffort: ReasoningEffort.low,
+        reasoningEffort: ReasoningEffort.none,
         enablePromptCacheControl: true,
       );
       const reduceConfig = GenerationConfig(
         temperature: 0.2,
         maxTokens: 12288,
         jsonMode: true,
-        reasoningEffort: ReasoningEffort.medium,
         enablePromptCacheControl: true,
       );
       const heavyReduceConfig = GenerationConfig(
         temperature: 0.25,
         maxTokens: 16384,
         jsonMode: true,
-        reasoningEffort: ReasoningEffort.medium,
         enablePromptCacheControl: true,
       );
 
@@ -1013,6 +1012,9 @@ class SourceScanController extends ChangeNotifier {
       // 始终保存原文到 BlobStore，便于写作助手 zm-search 随时按需查书
       await blobs.saveText(BlobKinds.continuation, pid, sourceText);
 
+      final lastChapterTitle = chunks.isNotEmpty
+          ? chunks.last.chapterTitle.trim()
+          : '';
       final profile = SourceNovelProfileData(
         id: pid,
         title: title,
@@ -1024,6 +1026,9 @@ class SourceScanController extends ChangeNotifier {
         openThreads: threads,
         activeArcs: timelineResult.activeArcs,
         continuationFromChapter: isContinuation ? analyzedChapters : null,
+        continuationFromTitle: isContinuation && lastChapterTitle.isNotEmpty
+            ? lastChapterTitle
+            : null,
         hasSourceText: true,
         meta: ScanMeta(
           totalChapters: analyzedChapters,
@@ -1084,9 +1089,11 @@ class SourceScanController extends ChangeNotifier {
     required NovelLocalIndexer indexer,
     required int generation,
   }) async {
-    final analyzedChapters = StyleChapterSampler.split(
-      sourceText,
-    ).length.clamp(1, 99999);
+    final splitChapters = StyleChapterSampler.split(sourceText);
+    final analyzedChapters = splitChapters.length.clamp(1, 99999);
+    final lastChapterTitle = splitChapters.isNotEmpty
+        ? splitChapters.last.marker.trim()
+        : '';
     final cleanedBody = indexer.chapters.isNotEmpty
         ? indexer.chapters
               .map((c) => '〔第${c.chapterNo}章 ${c.title}〕\n${c.body}')
@@ -1194,7 +1201,6 @@ Schema:
       temperature: 0.2,
       maxTokens: 16384,
       jsonMode: true,
-      reasoningEffort: ReasoningEffort.medium,
       enablePromptCacheControl: true,
     );
 
@@ -1229,6 +1235,8 @@ Schema:
               res.reply,
               fallbackTitle: title,
               upToChapter: analyzedChapters,
+              continuationFromTitle:
+                  lastChapterTitle.isNotEmpty ? lastChapterTitle : null,
               profileId: pid,
             )
           : SourceReducer.parseFinal(
@@ -1362,6 +1370,9 @@ Schema:
     }
 
     final totalChapters = indexer.chapters.length;
+    final lastChapterTitle = indexer.chapters.isNotEmpty
+        ? indexer.chapters.last.title.trim()
+        : '';
     final staticPrefix = indexer.buildEvidenceStaticPrefix(
       title: title,
       isContinuation: isContinuation,
@@ -1372,18 +1383,17 @@ Schema:
         '步骤 2/3：全书 ${indexer.chapters.length} 章已索引（发现 ${indexer.topEntities.length} 个核心实体），AI 正在定位需查证的伏笔与人物线索…';
     notifyListeners();
 
+    // Round 1 与 Round 2 统一跟随客户端默认推理档位，避免档位切换击穿前缀缓存
     const round1Config = GenerationConfig(
       temperature: 0.2,
       maxTokens: 12288,
       jsonMode: true,
-      reasoningEffort: ReasoningEffort.low,
       enablePromptCacheControl: true,
     );
     const round2Config = GenerationConfig(
       temperature: 0.25,
       maxTokens: 16384,
       jsonMode: true,
-      reasoningEffort: ReasoningEffort.medium,
       enablePromptCacheControl: true,
     );
 
@@ -1464,13 +1474,14 @@ Schema:
     "relationships": [{"target": "对象", "relation": "当前关系"}],
     "arc": [{"phase": "阶段", "state": "状态"}]
   }],
+  "relations": [{"from": "角色A", "to": "角色B", "relationType": "亲友|盟友|爱恋|敌对|从属|竞争|未知", "label": "简短标签（2-8字）", "description": "核心关系与张力（≤50字）", "strength": 4, "line": "明线|暗线"}],
   "timeline": [{"phase": "阶段名", "chapterRange": "约第X-Y章", "summary": "核心事件（≤70字）", "participants": ["角色"], "importance": "major|normal|minor"}],
   "worldbuilding": [{"category": "力量体系|地理|势力|规则|器物", "name": "词条", "content": "说明（≤80字）"}],
   "openThreads": [{"title": "未回收伏笔标题", "detail": "已埋线索与悬念（≤70字）", "plantedChapter": 1}],
   "activeArcs": ["截至第$totalChapters章正在推进中的剧情弧线"]
 }
 数量与防截断硬约束：
-1. characters 精选 8~14 名核心角色（每名角色 arc 至多 2~3 条），严禁违背查回的原文证据或混淆真实形态/性别；
+1. characters 精选 8~14 名核心角色（每名角色 arc 至多 2~3 条），严禁违背查回的原文证据或混淆真实形态/性别；relations 精选 6~15 条核心明暗线关系；
 2. timeline 精选 8~14 个关键剧情里程碑；worldbuilding 精选 8~14 条核心规则/势力/道具；openThreads 精选 5~10 条最重要未回收伏笔；activeArcs 3~5 条；
 3. 请保持字段凝练紧凑，务必输出完整闭合的单个 JSON 对象，避免超长被截断。'''
         : '''请结合【System 中的全书基线】与上面【查回的原文证据】，输出完整、精炼、闭合的【原作同人档案】JSON（只输出合法 JSON 对象，不要代码块或说明）：
@@ -1489,10 +1500,11 @@ Schema:
     "relationships": [{"target": "对象", "relation": "关系"}],
     "arc": [{"phase": "阶段", "state": "状态"}]
   }],
+  "relations": [{"from": "角色A", "to": "角色B", "relationType": "亲友|盟友|爱恋|敌对|从属|竞争|未知", "label": "简短标签（2-8字）", "description": "核心关系与张力（≤50字）", "strength": 4, "line": "明线|暗线"}],
   "timeline": [{"phase": "阶段名", "chapterRange": "约第X-Y章", "summary": "核心事件（≤70字）", "participants": ["角色"], "importance": "major|normal|minor"}],
   "worldbuilding": [{"category": "力量体系|地理|势力|规则|器物", "name": "词条", "content": "说明（≤80字）"}]
 }
-数量与防截断硬约束：characters 8~14 人、timeline 8~14 项、worldbuilding 8~14 项，字段精炼，确保完整闭合单个 JSON 对象。''';
+数量与防截断硬约束：characters 8~14 人、relations 6~15 条核心明暗线关系、timeline 8~14 项、worldbuilding 8~14 项，字段精炼，确保完整闭合单个 JSON 对象。''';
 
     // Round 2 严格保持 system -> user(R1) -> assistant(R1) -> user(R2) 轮次，最大化命中 KV Prefix Cache！
     final round2Messages = [
@@ -1544,6 +1556,8 @@ Schema:
                 res2.reply,
                 fallbackTitle: title,
                 upToChapter: totalChapters,
+                continuationFromTitle:
+                    lastChapterTitle.isNotEmpty ? lastChapterTitle : null,
                 profileId: pid,
               )
             : SourceReducer.parseFinal(
@@ -1569,7 +1583,7 @@ Schema:
     final enrichedChars = _enrichCharacters(
       profile.characters,
       indexer: indexer,
-      relations: const [],
+      relations: profile.relations,
     );
 
     // 保存原文到 BlobStore（同人/续写均落盘，支持后续写作助手 zm-search 实时查书）
@@ -1577,6 +1591,8 @@ Schema:
 
     profile = profile.copyWith(
       characters: enrichedChars,
+      continuationFromTitle:
+          isContinuation && lastChapterTitle.isNotEmpty ? lastChapterTitle : null,
       hasSourceText: true,
       meta: ScanMeta(
         totalChapters: totalChapters,

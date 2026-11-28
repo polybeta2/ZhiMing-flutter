@@ -147,7 +147,7 @@ void main() {
       expect(s2.messages[1].role, LLMRole.user);
       expect(s2.messages[1].content, contains('【样本文本】'));
       expect(s2.config.jsonMode, isTrue);
-      expect(s2.config.reasoningEffort, ReasoningEffort.medium);
+      expect(s2.config.reasoningEffort, isNull);
       expect(s2.config.enablePromptCacheControl, isTrue);
 
       final s3 = client.calls[1];
@@ -165,7 +165,7 @@ void main() {
         contains(library.resolvedText(PromptID.styleDistillCard)),
       );
       expect(s3.config.jsonMode, isTrue);
-      expect(s3.config.reasoningEffort, ReasoningEffort.medium);
+      expect(s3.config.reasoningEffort, isNull);
       expect(s3.config.enablePromptCacheControl, isTrue);
     });
 
@@ -194,7 +194,7 @@ void main() {
       expect(s3.messages[0].content, contains('断点规则'));
       expect(s3.messages[1].content, contains('【机制分析】'));
       expect(s3.config.jsonMode, isTrue);
-      expect(s3.config.reasoningEffort, ReasoningEffort.medium);
+      expect(s3.config.reasoningEffort, isNull);
       expect(s3.config.enablePromptCacheControl, isTrue);
     });
 
@@ -268,7 +268,7 @@ void main() {
       final s4 = client.calls[2];
       expect(s4.messages[0].cacheControl, isTrue);
       expect(s4.config.jsonMode, isTrue);
-      expect(s4.config.reasoningEffort, ReasoningEffort.low);
+      expect(s4.config.reasoningEffort, ReasoningEffort.none);
       expect(s4.config.enablePromptCacheControl, isTrue);
     });
 
@@ -312,7 +312,7 @@ void main() {
       expect(evalCall.messages[0].cacheControl, isTrue);
       expect(evalCall.messages[0].content, contains('评估附加规则'));
       expect(evalCall.config.jsonMode, isTrue);
-      expect(evalCall.config.reasoningEffort, ReasoningEffort.medium);
+      expect(evalCall.config.reasoningEffort, isNull);
       expect(evalCall.config.enablePromptCacheControl, isTrue);
 
       final fixCall = client.calls[1];

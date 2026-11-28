@@ -17,7 +17,10 @@ class ContinuationContext {
 
     final upTo = profile.continuationFromChapter;
     if (upTo != null) {
-      final header = '【续写锚点】已读至原作第 $upTo 章，将从第 ${upTo + 1} 章续写';
+      final titleAnchor = profile.continuationFromTitle?.trim();
+      final header = (titleAnchor != null && titleAnchor.isNotEmpty)
+          ? '【续写锚点】已读至原作第 $upTo 节（原文章节：《$titleAnchor》），请紧接该章末尾顺延后续章号续写，勿重复该章标题'
+          : '【续写锚点】已读至原作第 $upTo 章，将从第 ${upTo + 1} 章续写';
       sections.add(header);
       used += header.length + 2;
     }

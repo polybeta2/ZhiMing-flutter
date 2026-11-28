@@ -17,6 +17,7 @@ import '../../core/utils/text_encoding.dart';
 import '../../core/widgets/streaming_status_chip.dart';
 import '../../core/widgets/zm_widgets.dart';
 import '../../domain/models/source_profile_models.dart';
+import '../../domain/source/novel_text_cleaner.dart';
 import '../../domain/source/source_batch_helper.dart';
 import '../../domain/source/source_scan_chunker.dart';
 import '../../domain/style/style_chapter_sampler.dart';
@@ -733,6 +734,7 @@ class _ContinuationImportDialogState
     extends ConsumerState<ContinuationImportDialog> {
   String? _bookTitle;
   List<SampleChapter> _chapters = const [];
+  EndingWarningHint? _endingWarning;
   int _continueFrom = 1;
   bool _useBatchCopy = false;
   ScanMode _mode = ScanMode.evidence;
@@ -765,9 +767,11 @@ class _ContinuationImportDialogState
         RegExp(r'\.(txt|md)$', caseSensitive: false),
         '',
       );
+      final endingWarning = NovelTextCleaner.detectEndingWarning(chapters);
       setState(() {
         _bookTitle = fileName;
         _chapters = chapters;
+        _endingWarning = endingWarning;
         _continueFrom = chapters.length;
       });
     } catch (e) {
@@ -926,7 +930,70 @@ class _ContinuationImportDialogState
                       style: Theme.of(context).textTheme.bodySmall,
                     ),
                     const SizedBox(height: 12),
+                    if (_endingWarning != null &&
+                        _continueFrom == _chapters.length &&
+                        _chapters.length >= 2) ...[
+                      Container(
+                        margin: const EdgeInsets.only(bottom: 12),
+                        padding: const EdgeInsets.all(10),
+                        decoration: BoxDecoration(
+                          color: Colors.amber.withValues(alpha: 0.14),
+                          borderRadius: BorderRadius.circular(
+                            AppTokens.radiusInput,
+                          ),
+                          border: Border.all(
+                            color: Colors.amber.shade700.withValues(alpha: 0.4),
+                          ),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                Icon(
+                                  Icons.warning_amber_rounded,
+                                  size: 16,
+                                  color: Colors.amber.shade800,
+                                ),
+                                const SizedBox(width: 6),
+                                Expanded(
+                                  child: Text(
+                                    '末章疑似完结 / 烂尾',
+                                    style: Theme.of(context)
+                                        .textTheme
+                                        .labelMedium
+                                        ?.copyWith(
+                                          fontWeight: FontWeight.w700,
+                                          color: Colors.amber.shade900,
+                                        ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              _endingWarning!.reason,
+                              style: Theme.of(context).textTheme.bodySmall,
+                            ),
+                            const SizedBox(height: 6),
+                            Align(
+                              alignment: Alignment.centerRight,
+                              child: FilledButton.tonal(
+                                onPressed: () => setState(
+                                  () => _continueFrom = _chapters.length - 1,
+                                ),
+                                child: Text(
+                                  '回退至前一章（忽略末章 · ${_endingWarning!.suggestedFallbackTitle}）',
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
                     DropdownButtonFormField<int>(
+                      key: ValueKey('continue_from_$_continueFrom'),
                       initialValue: _continueFrom,
                       decoration: const InputDecoration(
                         labelText: '截至第几章（之后开始续写）',
@@ -936,13 +1003,59 @@ class _ContinuationImportDialogState
                         (i) => DropdownMenuItem(
                           value: i + 1,
                           child: Text(
-                            '第 ${i + 1} 章 · ${_chapters[i].marker}',
+                            '第 ${i + 1} 节 · ${_chapters[i].marker}',
                             overflow: TextOverflow.ellipsis,
                           ),
                         ),
                       ),
                       onChanged: (v) {
                         if (v != null) setState(() => _continueFrom = v);
+                      },
+                    ),
+                    const SizedBox(height: 8),
+                    Builder(
+                      builder: (ctx) {
+                        final selected = _chapters[_continueFrom - 1];
+                        final cleaned = NovelTextCleaner.cleanChapterBody(
+                          selected.body,
+                        );
+                        final preview = cleaned.length > 180
+                            ? '……${cleaned.substring(cleaned.length - 180)}'
+                            : cleaned;
+                        return Container(
+                          padding: const EdgeInsets.all(10),
+                          decoration: BoxDecoration(
+                            color: Theme.of(
+                              ctx,
+                            ).colorScheme.surfaceContainerHighest.withValues(alpha: 0.45),
+                            borderRadius: BorderRadius.circular(
+                              AppTokens.radiusInput,
+                            ),
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                '截断章末尾预览（已自动净化）：${selected.marker}',
+                                style: Theme.of(ctx).textTheme.labelSmall
+                                    ?.copyWith(fontWeight: FontWeight.w600),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                preview.isEmpty ? '（该章正文为空）' : preview,
+                                style: Theme.of(ctx).textTheme.bodySmall
+                                    ?.copyWith(
+                                      color: Theme.of(
+                                        ctx,
+                                      ).colorScheme.onSurfaceVariant,
+                                      height: 1.4,
+                                    ),
+                              ),
+                            ],
+                          ),
+                        );
                       },
                     ),
                     const SizedBox(height: 14),

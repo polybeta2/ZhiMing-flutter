@@ -598,7 +598,7 @@ void main() {
       expect(ctrl.phase, ScanPhase.done, reason: ctrl.errorMessage);
       expect(stub.calls, 1);
       expect(stub.lastConfig?.jsonMode, isTrue);
-      expect(stub.lastConfig?.reasoningEffort, ReasoningEffort.medium);
+      expect(stub.lastConfig?.reasoningEffort, isNull);
       expect(stub.lastConfig?.enablePromptCacheControl, isTrue);
       expect(stub.lastMessages.first.cacheControl, isTrue);
 

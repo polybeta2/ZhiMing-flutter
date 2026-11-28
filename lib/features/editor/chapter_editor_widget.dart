@@ -962,7 +962,7 @@ class _ChapterEditorWidgetState extends ConsumerState<ChapterEditorWidget> {
           temperature: 0.2,
           maxTokens: math.max(provider.maxTokens, 12288),
           jsonMode: true,
-          reasoningEffort: ReasoningEffort.low,
+          reasoningEffort: ReasoningEffort.none,
           enablePromptCacheControl: true,
         ),
         cancelToken: _summaryCancel,

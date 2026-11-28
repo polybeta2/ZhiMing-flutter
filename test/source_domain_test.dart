@@ -15,6 +15,7 @@ import 'package:zhiming/domain/source/source_reduce_watermark.dart';
 import 'package:zhiming/domain/source/source_reducer.dart';
 import 'package:zhiming/domain/source/source_scan_chunker.dart';
 import 'package:zhiming/domain/source/source_time_window.dart';
+import 'package:zhiming/domain/style/style_chapter_sampler.dart';
 import 'package:zhiming/domain/writing/assistant_search.dart';
 import 'package:zhiming/features/source_archive/source_injection_helper.dart';
 import 'package:zhiming/features/source_archive/source_scan_controller.dart';
@@ -49,6 +50,54 @@ void main() {
       expect(cleaned, contains('莫烬叹了口气'));
       expect(cleaned, isNot(contains('《完》')));
       expect(cleaned, isNot(contains('成绩不太理想')));
+
+      const holidayDirty = '''
+单纯多了几点信仰点，又能有什么问题呢。
+
+而接下来要上演的才是重头戏。
+
+……
+
+元旦快乐哦诸位。
+
+不谈虚的，给大家包个红包，比心。
+
+zfb口令：温良恭俭让仁义礼智信
+''';
+      final cleanedHoliday = NovelTextCleaner.cleanChapterBody(holidayDirty);
+      expect(cleanedHoliday, contains('重头戏'));
+      expect(cleanedHoliday, isNot(contains('元旦快乐')));
+      expect(cleanedHoliday, isNot(contains('zfb口令')));
+
+      const parenthesizedEnd = '''
+凯拉尔竖起中指。
+旧日的世界在此刻寂灭。
+……
+（全书完。）
+''';
+      final cleanedEnd = NovelTextCleaner.cleanChapterBody(parenthesizedEnd);
+      expect(cleanedEnd, contains('旧日的世界在此刻寂灭'));
+      expect(cleanedEnd, isNot(contains('全书完')));
+
+      final chaptersWithRushedEnd = [
+        const SampleChapter(
+          marker: '第178章 约会（七）',
+          number: 178,
+          symbol: '章',
+          body: '约会还在继续。',
+        ),
+        const SampleChapter(
+          marker: '第179章 世界的终结',
+          number: 179,
+          symbol: '章',
+          body: '不能等把恋爱部分写完再完结吗？\n（全书完。）',
+        ),
+      ];
+      final warning = NovelTextCleaner.detectEndingWarning(
+        chaptersWithRushedEnd,
+      );
+      expect(warning, isNotNull);
+      expect(warning!.suggestedFallbackTitle, '第178章 约会（七）');
     });
 
     test('NovelLocalIndexer auto-discovers entities, voice samples & grepSpan', () {
@@ -151,10 +200,15 @@ void main() {
         raw,
         fallbackTitle: '默认书名',
         upToChapter: 10,
+        continuationFromTitle: '第11章 跳号测试',
       );
       expect(profile.title, '雾港秘史');
       expect(profile.continuationFromChapter, 10);
+      expect(profile.continuationFromTitle, '第11章 跳号测试');
       expect(profile.characters.first.currentState, contains('左臂负伤'));
+      expect(profile.relations, isNotEmpty);
+      expect(profile.relations.first.from, '沈屿');
+      expect(profile.relations.first.to, '林岚');
       expect(profile.openThreads.first.plantedChapter, 3);
 
       final ctx = ContinuationContext.rendered(
@@ -162,7 +216,8 @@ void main() {
         recentText: '灯塔外的雾越来越浓，沈屿听见楼上传来靴底摩擦木板的声音。',
         maxChars: 2000,
       );
-      expect(ctx, contains('第 10 章'));
+      expect(ctx, contains('第11章 跳号测试'));
+      expect(ctx, contains('第 10 节'));
       expect(ctx, contains('左臂负伤'));
       expect(ctx, contains('银钥匙归属'));
       expect(ctx, contains('灯塔外的雾越来越浓'));

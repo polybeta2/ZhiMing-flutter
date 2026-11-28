@@ -102,7 +102,14 @@ abstract final class ContextBuilder {
       maxWorldEntries: worldLimit,
     );
 
-    // Static tier 4-6: 世界观 -> 人物关系网（含明暗线） -> 角色固定档案（不含可变状态）
+    // Static tier 4-6: 角色固定档案 -> 世界观 -> 人物关系网（越稳定越靠前，高频演化的关系置于 static 末段以保护 KV 前缀）
+    final staticChars = lorebook.characters
+        .map(_renderStaticCharacter)
+        .toList();
+    if (staticChars.isNotEmpty) {
+      staticOptional.add(('角色状态', '【角色固定档案】\n${staticChars.join('\n\n')}'));
+    }
+
     final world = lorebook.worldEntries
         .map((w) => '- [${w.category}] ${w.name}：${w.content}')
         .toList();
@@ -116,13 +123,6 @@ abstract final class ContextBuilder {
     );
     if (relBlock != null) {
       staticOptional.add(('人物关系网', relBlock));
-    }
-
-    final staticChars = lorebook.characters
-        .map(_renderStaticCharacter)
-        .toList();
-    if (staticChars.isNotEmpty) {
-      staticOptional.add(('角色状态', '【角色固定档案】\n${staticChars.join('\n\n')}'));
     }
 
     // Dynamic tier 1: 角色本章实时现状（可变字段全数下沉到 user 消息，保护 system KV 缓存）

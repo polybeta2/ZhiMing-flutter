@@ -1,15 +1,18 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math' as math;
 
 import 'package:dio/dio.dart';
 import 'package:dio/io.dart';
+import 'package:flutter/foundation.dart';
 
 import 'llm_types.dart';
 
 /// OpenAI 兼容 SSE 流式客户端：
 /// - 修复原版 B5：分离连接超时（20s）与分片空闲超时（90s），不再因长思考/长输出 120s 总时长硬断；
-/// - 完整支持 reasoning_content / reasoning / content / usage / 流中 error 帧；
+/// - 完整支持 reasoning_content / reasoning / content / usage / finish_reason / 流中 error 帧；
+/// - 支持默认推理强度注入、思考模式 32K 输出兜底、「思考链饿死正文」明确报错与端点扩展降级缓存；
 /// - 支持可选 HTTP 代理配置。
 class OpenAiSseClient implements LLMClient {
   OpenAiSseClient({
@@ -17,6 +20,7 @@ class OpenAiSseClient implements LLMClient {
     required this.apiKey,
     required this.model,
     this.proxyUrl,
+    this.defaultReasoningEffort,
     Dio? dio,
   }) : _baseUrl = baseUrl.trim(),
        _dio = dio ?? _createDio(proxyUrl);
@@ -25,7 +29,19 @@ class OpenAiSseClient implements LLMClient {
   final String apiKey;
   final String model;
   final String? proxyUrl;
+  final ReasoningEffort? defaultReasoningEffort;
   final Dio _dio;
+
+  /// 记录已知不支持 `response_format` / `reasoning_effort` 等扩展参数的网关+模型组合，
+  /// 避免每次请求都重复试探一次 HTTP 400/422 往返。
+  static final Set<String> _unsupportedExtensionEndpoints = <String>{};
+
+  @visibleForTesting
+  static void clearUnsupportedExtensionCache() {
+    _unsupportedExtensionEndpoints.clear();
+  }
+
+  String get _endpointCacheKey => '$_baseUrl|${model.trim()}';
 
   static Dio _createDio(String? proxyUrl) {
     final dio = Dio(
@@ -95,11 +111,33 @@ class OpenAiSseClient implements LLMClient {
     CancelToken? cancelToken,
   }) async* {
     final uri = _buildEndpoint('chat/completions');
-    var allowOptionalExtensions = true;
+    final resolvedEffort = config.reasoningEffort ?? defaultReasoningEffort;
+    final isThinkingEnabled =
+        resolvedEffort == ReasoningEffort.low ||
+        resolvedEffort == ReasoningEffort.medium ||
+        resolvedEffort == ReasoningEffort.high;
+    final resolvedMaxTokens =
+        (isThinkingEnabled &&
+            config.maxTokens >= 12288 &&
+            config.maxTokens < 32768)
+        ? math.max(config.maxTokens, 32768)
+        : config.maxTokens;
+    final resolvedConfig = GenerationConfig(
+      temperature: config.temperature,
+      maxTokens: resolvedMaxTokens,
+      includeUsage: config.includeUsage,
+      jsonMode: config.jsonMode,
+      reasoningEffort: resolvedEffort,
+      enablePromptCacheControl: config.enablePromptCacheControl,
+    );
+
+    var allowOptionalExtensions =
+        !_unsupportedExtensionEndpoints.contains(_endpointCacheKey);
     final hasOptionalExtensions =
-        config.jsonMode ||
-        config.reasoningEffort != null ||
-        (config.enablePromptCacheControl && _supportsExplicitCacheControl);
+        resolvedConfig.jsonMode ||
+        resolvedConfig.reasoningEffort != null ||
+        (resolvedConfig.enablePromptCacheControl &&
+            _supportsExplicitCacheControl);
 
     const maxPreTokenAttempts = 3;
     for (var attempt = 0; attempt < maxPreTokenAttempts; attempt++) {
@@ -108,15 +146,15 @@ class OpenAiSseClient implements LLMClient {
       var yieldedContent = false;
 
       final effectiveConfig = allowOptionalExtensions
-          ? config
+          ? resolvedConfig
           : GenerationConfig(
-              temperature: config.temperature,
-              maxTokens: config.maxTokens,
-              includeUsage: config.includeUsage,
+              temperature: resolvedConfig.temperature,
+              maxTokens: resolvedConfig.maxTokens,
+              includeUsage: resolvedConfig.includeUsage,
             );
       final useCache =
           allowOptionalExtensions &&
-          config.enablePromptCacheControl &&
+          effectiveConfig.enablePromptCacheControl &&
           _supportsExplicitCacheControl;
       final body = buildRequestBody(
         model: model,
@@ -177,6 +215,7 @@ class OpenAiSseClient implements LLMClient {
             allowOptionalExtensions &&
             hasOptionalExtensions &&
             attempt < maxPreTokenAttempts - 1) {
+          _unsupportedExtensionEndpoints.add(_endpointCacheKey);
           allowOptionalExtensions = false;
           continue;
         }
@@ -191,6 +230,10 @@ class OpenAiSseClient implements LLMClient {
           .cast<List<int>>()
           .transform(const Utf8Decoder(allowMalformed: true))
           .transform(const LineSplitter());
+
+      var contentChars = 0;
+      var reasoningChars = 0;
+      String? finishReason;
 
       try {
         await for (final line in lineStream) {
@@ -207,12 +250,40 @@ class OpenAiSseClient implements LLMClient {
             }
             throw LLMException.httpStatus(500, errorText);
           }
+          final chunkFinish = extractFinishReason(payload);
+          if (chunkFinish != null) {
+            finishReason = chunkFinish;
+          }
           for (final event in extractEvents(payload)) {
             if (event is ContentDelta && event.text.isNotEmpty) {
               yieldedContent = true;
+              contentChars += event.text.length;
+              yield event;
+            } else if (event is ReasoningDelta && event.text.isNotEmpty) {
+              reasoningChars += event.text.length;
+              yield event;
+            } else if (event is UsageReport) {
+              yield (event.finishReason == null && finishReason != null)
+                  ? UsageReport(
+                      promptTokens: event.promptTokens,
+                      completionTokens: event.completionTokens,
+                      cachedTokens: event.cachedTokens,
+                      reasoningTokens: event.reasoningTokens,
+                      cacheCreationTokens: event.cacheCreationTokens,
+                      finishReason: finishReason,
+                    )
+                  : event;
+            } else {
+              yield event;
             }
-            yield event;
           }
+        }
+        if (contentChars == 0 &&
+            reasoningChars > 0 &&
+            finishReason == 'length') {
+          throw LLMException(
+            '模型思考过程（$reasoningChars 字）耗尽了最大输出上限（${effectiveConfig.maxTokens} tokens），导致正文输出为空。建议在「设置 → 推理思考模式」选择「智能分级（推荐）」或调大模型的最大输出 Token。',
+          );
         }
         return;
       } on _PreTokenRetrySignal {
@@ -272,6 +343,7 @@ class OpenAiSseClient implements LLMClient {
         temperature: 0,
         maxTokens: 512,
         includeUsage: false,
+        reasoningEffort: ReasoningEffort.none,
       ),
       cancelToken: cancelToken,
     )) {
@@ -318,6 +390,23 @@ class OpenAiSseClient implements LLMClient {
     return ids;
   }
 
+  /// 提取单帧 SSE 中的 `choices[0].finish_reason`
+  static String? extractFinishReason(String payload) {
+    dynamic decoded;
+    try {
+      decoded = jsonDecode(payload);
+    } catch (_) {
+      return null;
+    }
+    if (decoded is! Map<String, dynamic>) return null;
+    final choices = decoded['choices'];
+    if (choices is! List || choices.isEmpty) return null;
+    final first = choices.first;
+    if (first is! Map) return null;
+    final reason = first['finish_reason']?.toString().trim();
+    return (reason == null || reason.isEmpty) ? null : reason;
+  }
+
   /// 解析单帧 SSE JSON：可同时包含思维链、正文与用量信息
   static List<StreamEvent> extractEvents(String payload) {
     dynamic decoded;
@@ -329,9 +418,16 @@ class OpenAiSseClient implements LLMClient {
     if (decoded is! Map<String, dynamic>) return const [];
 
     final events = <StreamEvent>[];
+    String? finishReason;
     final choices = decoded['choices'];
     if (choices is List && choices.isNotEmpty) {
       final first = choices.first;
+      if (first is Map) {
+        final rawReason = first['finish_reason']?.toString().trim();
+        if (rawReason != null && rawReason.isNotEmpty) {
+          finishReason = rawReason;
+        }
+      }
       if (first is Map && first['delta'] is Map) {
         final delta = first['delta'] as Map;
         final reasoning = delta['reasoning_content'] ?? delta['reasoning'];
@@ -376,6 +472,7 @@ class OpenAiSseClient implements LLMClient {
             cachedTokens: cached,
             reasoningTokens: reasoning,
             cacheCreationTokens: cacheCreation,
+            finishReason: finishReason,
           ),
         );
       }

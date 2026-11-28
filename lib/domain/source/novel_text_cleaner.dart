@@ -1,12 +1,64 @@
+import '../style/style_chapter_sampler.dart' show SampleChapter;
+
+/// 续写导入末章完结/烂尾风险提示
+class EndingWarningHint {
+  const EndingWarningHint({
+    required this.reason,
+    required this.lastChapterTitle,
+    required this.suggestedFallbackTitle,
+  });
+
+  final String reason;
+  final String lastChapterTitle;
+  final String suggestedFallbackTitle;
+}
+
 /// 网文原文净化器：
 /// 自动剥离番茄/起点/刺猬猫等平台下载 TXT 中的元信息头、分隔线，以及章节末尾的
-/// 《完》/作者退场感言/PS/求月票等脏文本，防止污染 AI 续写上下文与文风计量。
+/// 《完》/作者退场感言/PS/求月票/红包口令等脏文本，防止污染 AI 续写上下文与文风计量。
 abstract final class NovelTextCleaner {
   /// 识别章节尾部明显的完结标记或作者退场感言起始行
   static final RegExp _tailEndMarker = RegExp(
-    r'^\s*(?:《完》|【完】|\(完\)|（完）|全书完|本书完|大结局完|正文完|作者有话说|作者的话|完本感言|切书感言|太监感言|PS[:：]|P\.S\.[:：]|求月票|求推荐票|求追读|感谢大家的?支持|[-=＝—_*]{10,})\s*',
+    r'^\s*(?:'
+    r'[（(【《\[]?\s*(?:全书完|本书完|大结局完|正文完|剧终|完结撒花|完)\s*[。！!~～]*\s*[）)】》\]]?\s*$|'
+    r'(?:作者有话说|作者的话|完本感言|切书感言|太监感言|PS[:：]|P\.S\.[:：]|求月票|求推荐票|求追读|求催更|求五星好评|求免费礼物|点点催更|请假条|番外预告|感谢大家的?支持|(?:元旦|春节|新年|中秋|国庆|圣诞|端午|情人节|七夕)快乐|发个?红包|包个?红包|zfb口令|支付宝口令|微信红包|口令红包|[-=＝—_*]{10,})'
+    r')\s*',
     caseSensitive: false,
   );
+
+  static final RegExp _endingTitleRe = RegExp(
+    r'(?:大结局|终章|尾声|世界的终结|全书完|完结感言|后记|切书)',
+  );
+
+  static final RegExp _endingBodyRe = RegExp(
+    r'(?:全书完|本书完|完结撒花|太监|切书|给.{0,8}作者带个话|写完再完结)',
+  );
+
+  /// 检测小说末章是否疑似完结/强行烂尾，供续写导入向导提前预警与一键回退到倒数第二章。
+  static EndingWarningHint? detectEndingWarning(List<SampleChapter> chapters) {
+    if (chapters.length < 2) return null;
+    final last = chapters.last;
+    final prev = chapters[chapters.length - 2];
+    final title = last.marker.trim();
+    final body = last.body.trim();
+    final tail = body.length > 600 ? body.substring(body.length - 600) : body;
+
+    if (_endingTitleRe.hasMatch(title)) {
+      return EndingWarningHint(
+        reason: '末章标题「$title」疑似结局/完结章，若属强行烂尾建议改从前一章切入续写。',
+        lastChapterTitle: title,
+        suggestedFallbackTitle: prev.marker.trim(),
+      );
+    }
+    if (_endingBodyRe.hasMatch(tail)) {
+      return EndingWarningHint(
+        reason: '末章正文末尾出现完结/元叙述特征，若属强行烂尾建议改从前一章切入续写。',
+        lastChapterTitle: title,
+        suggestedFallbackTitle: prev.marker.trim(),
+      );
+    }
+    return null;
+  }
 
   /// 识别开篇常见的下载器元信息行（如 `book_id=...`、`在读：...`、`评分：...`）
   static final RegExp _metaLine = RegExp(

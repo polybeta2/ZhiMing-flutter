@@ -336,7 +336,7 @@ class _AutoWriteSheetState extends ConsumerState<AutoWriteSheet> {
             temperature: 0.2,
             maxTokens: math.max(toolProvider.maxTokens, 12288),
             jsonMode: true,
-            reasoningEffort: ReasoningEffort.low,
+            reasoningEffort: ReasoningEffort.none,
             enablePromptCacheControl: true,
           ),
           cancelToken: _cancel,

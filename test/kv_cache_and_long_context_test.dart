@@ -245,9 +245,9 @@ void main() {
         expect(styleGuidePos, greaterThan(antiAiPos));
         expect(directorPos, greaterThan(styleGuidePos));
         expect(styleCardPos, greaterThan(directorPos));
-        expect(worldPos, greaterThan(styleCardPos));
+        expect(staticCharPos, greaterThan(styleCardPos));
+        expect(worldPos, greaterThan(staticCharPos));
         expect(relPos, greaterThan(worldPos));
-        expect(staticCharPos, greaterThan(relPos));
 
         // Static prefix has NO mutable state or sourceWindow
         expect(ctxA.staticPrefix, isNot(contains('钟楼一层')));
@@ -442,10 +442,7 @@ void main() {
         );
         expect(reviewRes.rawJsonReply, equals(reviewJson));
         expect(fakeClient.recordedConfigs[0].jsonMode, isTrue);
-        expect(
-          fakeClient.recordedConfigs[0].reasoningEffort,
-          ReasoningEffort.medium,
-        );
+        expect(fakeClient.recordedConfigs[0].reasoningEffort, isNull);
         expect(fakeClient.recordedConfigs[0].enablePromptCacheControl, isTrue);
 
         final fixed = await service.applyFixes(
@@ -606,6 +603,120 @@ void main() {
         expect(longCtx.staticPrefix, contains('角色_15'));
         expect(compactCtx.staticPrefix, isNot(contains('规则_12')));
         expect(longCtx.staticPrefix, contains('规则_12'));
+      },
+    );
+
+    test(
+      'appending world entry & updating relation preserves entire earlier staticPrefix byte-for-byte',
+      () {
+        final now = DateTime(2026, 11, 27);
+        final c1 = Character(
+          id: 'c1',
+          novelId: 'n1',
+          name: '莫烬',
+          aliasesJson: '[]',
+          personality: '沉静克制',
+          isSceneRelevant: true,
+          arcJson: '[]',
+          sortOrder: 0,
+        );
+        final c2 = Character(
+          id: 'c2',
+          novelId: 'n1',
+          name: '罗娜',
+          aliasesJson: '[]',
+          personality: '冷静果断',
+          isSceneRelevant: true,
+          arcJson: '[]',
+          sortOrder: 1,
+        );
+        final w1 = WorldEntry(
+          id: 'w1',
+          novelId: 'n1',
+          category: '规则',
+          name: '钟声法则',
+          content: '午夜钟响后落锁。',
+          keywordsJson: '[]',
+          isAlwaysOn: true,
+          sortOrder: 0,
+        );
+        final w2 = WorldEntry(
+          id: 'w2',
+          novelId: 'n1',
+          category: '势力',
+          name: '银辉议会',
+          content: '新发现的地下议会。',
+          keywordsJson: '[]',
+          isAlwaysOn: true,
+          sortOrder: 1,
+        );
+        final relBefore = CharacterRelation(
+          id: 'r1',
+          novelId: 'n1',
+          sourceCharacterId: 'c1',
+          targetCharacterId: 'c2',
+          relationType: '盟友',
+          label: '试探合作',
+          description: '初识搭档',
+          strength: 3,
+          line: '明线',
+          status: 'active',
+          evolutionJson: '[]',
+          updatedAt: now,
+        );
+        final relAfter = relBefore.copyWith(
+          label: '生死同盟',
+          strength: 5,
+        );
+        final ch1 = _makeChapter(id: 'ch1', order: 1, outline: '莫烬与罗娜合作。', now: now);
+        final ch2 = _makeChapter(id: 'ch2', order: 2, outline: '议会正式现身。', now: now);
+
+        NovelBundle buildBundle(List<WorldEntry> worlds, CharacterRelation rel) =>
+            NovelBundle(
+              novel: Novel(
+                id: 'n1',
+                title: '测试',
+                synopsis: '',
+                styleGuide: '冷硬克制',
+                enabledTagIdsJson: '[]',
+                r18Enabled: false,
+                lastTotalWordCount: 0,
+                createdAt: now,
+                updatedAt: now,
+              ),
+              volumes: [
+                VolumeBundle(
+                  volume: const Volume(
+                    id: 'v1',
+                    novelId: 'n1',
+                    name: '第一卷',
+                    sortOrder: 1,
+                  ),
+                  chapters: [ch1, ch2],
+                ),
+              ],
+              characters: [c1, c2],
+              worldEntries: worlds,
+              foreshadowings: const [],
+              relations: [rel],
+              timelineEvents: const [],
+            );
+
+        final ctx1 = ContextBuilder.buildContinueContext(
+          chapter: ch1,
+          bundle: buildBundle([w1], relBefore),
+          budgetChars: 128000,
+        );
+        final ctx2 = ContextBuilder.buildContinueContext(
+          chapter: ch2,
+          bundle: buildBundle([w1, w2], relAfter),
+          budgetChars: 128000,
+        );
+
+        final relMarker = ctx1.staticPrefix.indexOf('【人物关系网');
+        expect(relMarker, greaterThan(0));
+        final stablePrefix1 = ctx1.staticPrefix.substring(0, relMarker).trimRight();
+        expect(ctx2.staticPrefix.startsWith(stablePrefix1), isTrue);
       },
     );
   });

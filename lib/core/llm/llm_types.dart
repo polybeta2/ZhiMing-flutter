@@ -10,6 +10,7 @@ enum LLMRole {
 }
 
 enum ReasoningEffort {
+  none('none'),
   minimal('minimal'),
   low('low'),
   medium('medium'),
@@ -87,6 +88,7 @@ final class UsageReport extends StreamEvent {
     this.cachedTokens = 0,
     this.reasoningTokens = 0,
     this.cacheCreationTokens = 0,
+    this.finishReason,
   });
 
   final int promptTokens;
@@ -94,6 +96,10 @@ final class UsageReport extends StreamEvent {
   final int cachedTokens;
   final int reasoningTokens;
   final int cacheCreationTokens;
+  final String? finishReason;
+
+  /// 是否因触发 `max_tokens` 输出上限被强制截断
+  bool get isTruncatedByLength => finishReason == 'length';
 
   /// KV 前缀缓存命中率（0.0 ~ 1.0）
   double get cacheHitRate =>

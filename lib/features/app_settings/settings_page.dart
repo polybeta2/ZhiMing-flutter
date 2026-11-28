@@ -339,6 +339,59 @@ class SettingsPage extends ConsumerWidget {
     );
   }
 
+  Future<void> _openReasoningPreferenceDialog(
+    BuildContext context,
+    WidgetRef ref,
+  ) async {
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => Consumer(
+        builder: (ctx, dialogRef, _) {
+          final current = dialogRef.watch(reasoningPreferenceProvider);
+          return AlertDialog(
+            title: const Text('推理思考模式'),
+            content: SizedBox(
+              width: double.maxFinite,
+              child: SingleChildScrollView(
+                child: RadioGroup<ReasoningPreference>(
+                  groupValue: current,
+                  onChanged: (val) async {
+                    if (val == null) return;
+                    await dialogRef
+                        .read(reasoningPreferenceProvider.notifier)
+                        .setPreference(val);
+                    if (ctx.mounted) Navigator.of(ctx).pop();
+                  },
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      for (final p in ReasoningPreference.values)
+                        RadioListTile<ReasoningPreference>(
+                          value: p,
+                          contentPadding: EdgeInsets.zero,
+                          title: Text(p.label),
+                          subtitle: Text(
+                            p.description,
+                            style: Theme.of(ctx).textTheme.bodySmall,
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(ctx).pop(),
+                child: const Text('关闭'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final defaultProvider = ref.watch(defaultProviderProvider);
@@ -346,6 +399,7 @@ class SettingsPage extends ConsumerWidget {
         ref.watch(providersStreamProvider).valueOrNull ?? const [];
     final fastToolProviderId = ref.watch(fastToolProviderIdProvider);
     final fastProvider = ref.watch(fastToolProviderProvider);
+    final reasoningPref = ref.watch(reasoningPreferenceProvider);
     final hasCustomFastTool =
         fastToolProviderId != null &&
         providers.any((p) => p.id == fastToolProviderId) &&
@@ -405,6 +459,27 @@ class SettingsPage extends ConsumerWidget {
                   ),
                   trailing: const Icon(Icons.chevron_right),
                   onTap: () => _openFastToolModelDialog(context, ref),
+                ),
+              ),
+              const SizedBox(height: AppTokens.s2),
+              Card(
+                child: ListTile(
+                  leading: const ZmSettingsIcon(
+                    icon: Icons.psychology_outlined,
+                    tint: Colors.indigo,
+                  ),
+                  title: const Text(
+                    '推理思考模式',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  subtitle: Text(
+                    '当前：${reasoningPref.label}',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () => _openReasoningPreferenceDialog(context, ref),
                 ),
               ),
               const SizedBox(height: AppTokens.s5),

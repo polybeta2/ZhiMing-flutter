@@ -396,12 +396,13 @@ class FactReviewService {
     return buf.toString();
   }
 
-  /// 执行 5 维客观事实审稿（推理模型友好：maxTokens 至少 12288）。
+  /// 执行 5 维客观事实审稿（可选推理强度：默认 null 以跟随客户端偏好并保护续写固定前缀缓存）。
   Future<FactReviewResult> review({
     required String truthArchive,
     required String chapterTitle,
     required String draftContent,
     int maxTokens = 12288,
+    ReasoningEffort? reasoningEffort,
     void Function(StreamEvent)? onEvent,
     CancelToken? cancelToken,
   }) async {
@@ -421,7 +422,7 @@ class FactReviewService {
         temperature: 0.15,
         maxTokens: math.max(maxTokens, 12288),
         jsonMode: true,
-        reasoningEffort: ReasoningEffort.medium,
+        reasoningEffort: reasoningEffort,
         enablePromptCacheControl: true,
       ),
       cancelToken: cancelToken,

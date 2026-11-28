@@ -624,5 +624,151 @@ void main() {
         expect(tracker.value.lastUsage, isNull);
       },
     );
+
+    test(
+      'OpenAiSseClient handles ReasoningEffort.none, starvation error, 32k boost & endpoint fallback cache',
+      () async {
+        OpenAiSseClient.clearUnsupportedExtensionCache();
+        expect(ReasoningEffort.none.wireValue, 'none');
+
+        final capturedBodies = <Map<String, dynamic>>[];
+        var scenario = 'starved';
+        final dio = Dio();
+        dio.httpClientAdapter = _ScriptedHttpClientAdapter((
+          options,
+          body,
+          callIndex,
+        ) async {
+          capturedBodies.add(body);
+          if (scenario == 'starved') {
+            return ResponseBody.fromString(
+              'data: {"choices":[{"delta":{"reasoning_content":"很长的思考过程"}}]}\n\n'
+              'data: {"choices":[{"delta":{},"finish_reason":"length"}],"usage":{"prompt_tokens":100,"completion_tokens":32768}}\n\n'
+              'data: [DONE]\n\n',
+              200,
+              headers: {
+                Headers.contentTypeHeader: ['text/event-stream'],
+              },
+            );
+          }
+          if (callIndex == 1) {
+            return ResponseBody.fromString(
+              '{"error":{"message":"unsupported reasoning_effort"}}',
+              400,
+              headers: {
+                Headers.contentTypeHeader: [Headers.jsonContentType],
+              },
+            );
+          }
+          return ResponseBody.fromString(
+            'data: {"choices":[{"delta":{"content":"正常输出"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n',
+            200,
+            headers: {
+              Headers.contentTypeHeader: ['text/event-stream'],
+            },
+          );
+        });
+
+        final client = OpenAiSseClient(
+          baseUrl: 'https://cache-probe.example.com/v1',
+          apiKey: 'sk-test-key',
+          model: 'test-reasoning-model',
+          defaultReasoningEffort: ReasoningEffort.none,
+          dio: dio,
+        );
+
+        // 1) Thinking mode boosts maxTokens >= 32768 and throws clear starvation message when content==0 & finish_reason=='length'
+        await expectLater(
+          client
+              .streamChat(
+                const [LLMMessage(role: LLMRole.user, content: '写一章')],
+                config: const GenerationConfig(
+                  maxTokens: 16384,
+                  reasoningEffort: ReasoningEffort.medium,
+                ),
+              )
+              .toList(),
+          throwsA(
+            isA<LLMException>().having(
+              (e) => e.message,
+              'message',
+              allOf(contains('思考过程'), contains('耗尽了最大输出上限')),
+            ),
+          ),
+        );
+        expect(capturedBodies[0]['max_tokens'], 32768);
+        expect(capturedBodies[0]['reasoning_effort'], 'medium');
+
+        // 2) First 400 caches unsupported endpoint+model; second call skips extensions directly without retrying 400
+        scenario = 'fallback';
+        final r1 = await client
+            .streamChat(
+              const [LLMMessage(role: LLMRole.user, content: '批扫')],
+              config: const GenerationConfig(jsonMode: true),
+            )
+            .toList();
+        expect(r1.whereType<ContentDelta>().single.text, '正常输出');
+        expect(capturedBodies.length, 3);
+        expect(capturedBodies[1]['reasoning_effort'], 'none');
+        expect(capturedBodies[2].containsKey('reasoning_effort'), isFalse);
+
+        final r2 = await client
+            .streamChat(
+              const [LLMMessage(role: LLMRole.user, content: '第二批')],
+              config: const GenerationConfig(jsonMode: true),
+            )
+            .toList();
+        expect(r2.whereType<ContentDelta>().single.text, '正常输出');
+        // Directly skipped optional extensions -> only 1 HTTP call (index 3)
+        expect(capturedBodies.length, 4);
+        expect(capturedBodies[3].containsKey('response_format'), isFalse);
+        OpenAiSseClient.clearUnsupportedExtensionCache();
+      },
+    );
+
+    test(
+      'ReasoningPreference resolves tiered efforts and persists preference',
+      () async {
+        expect(
+          resolveReasoningEffort(ReasoningPreference.balanced),
+          ReasoningEffort.none,
+        );
+        expect(
+          resolveReasoningEffort(ReasoningPreference.low),
+          ReasoningEffort.low,
+        );
+        expect(
+          resolveReasoningEffort(
+            ReasoningPreference.low,
+            isStructuredBatch: true,
+          ),
+          ReasoningEffort.none,
+        );
+        expect(
+          resolveReasoningEffort(ReasoningPreference.providerDefault),
+          isNull,
+        );
+
+        SharedPreferences.setMockInitialValues({
+          'llm.reasoningPreference': 'medium',
+        });
+        final container = ProviderContainer();
+        addTearDown(container.dispose);
+        container.read(reasoningPreferenceProvider);
+        await Future<void>.delayed(Duration.zero);
+        expect(
+          container.read(reasoningPreferenceProvider),
+          ReasoningPreference.medium,
+        );
+
+        await container
+            .read(reasoningPreferenceProvider.notifier)
+            .setPreference(ReasoningPreference.balanced);
+        expect(
+          container.read(reasoningPreferenceProvider),
+          ReasoningPreference.balanced,
+        );
+      },
+    );
   });
 }

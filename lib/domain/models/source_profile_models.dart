@@ -640,6 +640,7 @@ class SourceNovelProfileData {
     this.activeArcs = const [],
     this.styleProfileId,
     this.continuationFromChapter,
+    this.continuationFromTitle,
     this.hasSourceText = false,
     this.scanState = const ScanState(),
     DateTime? createdAt,
@@ -659,6 +660,7 @@ class SourceNovelProfileData {
   final List<String> activeArcs;
   final String? styleProfileId;
   final int? continuationFromChapter;
+  final String? continuationFromTitle;
   final bool hasSourceText;
   final ScanState scanState;
   final DateTime createdAt;
@@ -678,6 +680,7 @@ class SourceNovelProfileData {
     String? styleProfileId,
     bool clearStyleProfileId = false,
     int? continuationFromChapter,
+    String? continuationFromTitle,
     bool? hasSourceText,
     ScanState? scanState,
     DateTime? createdAt,
@@ -699,6 +702,8 @@ class SourceNovelProfileData {
           : (styleProfileId ?? this.styleProfileId),
       continuationFromChapter:
           continuationFromChapter ?? this.continuationFromChapter,
+      continuationFromTitle:
+          continuationFromTitle ?? this.continuationFromTitle,
       hasSourceText: hasSourceText ?? this.hasSourceText,
       scanState: scanState ?? this.scanState,
       createdAt: createdAt ?? this.createdAt,
@@ -721,6 +726,8 @@ class SourceNovelProfileData {
     if (styleProfileId != null) 'styleProfileId': styleProfileId,
     if (continuationFromChapter != null)
       'continuationFromChapter': continuationFromChapter,
+    if (continuationFromTitle != null)
+      'continuationFromTitle': continuationFromTitle,
     'hasSourceText': hasSourceText,
     'scanState': scanState.toJson(),
     'createdAt': createdAt.toIso8601String(),
@@ -770,6 +777,7 @@ class SourceNovelProfileData {
       ),
       continuationFromChapter: (json['continuationFromChapter'] as num?)
           ?.toInt(),
+      continuationFromTitle: _optString(json['continuationFromTitle']),
       hasSourceText: json['hasSourceText'] == true,
       scanState: ScanState.fromJson(
         json['scanState'] is Map

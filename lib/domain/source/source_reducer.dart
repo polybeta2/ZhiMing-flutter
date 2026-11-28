@@ -143,6 +143,7 @@ Schema:
     String raw, {
     required String fallbackTitle,
     required int upToChapter,
+    String? continuationFromTitle,
     String? profileId,
   }) {
     final map = LLMJSONParser.decodeTopLevelObject(raw, (m) => m);
@@ -154,6 +155,7 @@ Schema:
       fallbackTitle: fallbackTitle,
       profileId: profileId,
       continuationFromChapter: upToChapter,
+      continuationFromTitle: continuationFromTitle,
     );
   }
 
@@ -162,6 +164,7 @@ Schema:
     required String fallbackTitle,
     String? profileId,
     required int? continuationFromChapter,
+    String? continuationFromTitle,
   }) {
     final rawTitle = map['title']?.toString().trim() ?? '';
     final title = rawTitle.isEmpty ? fallbackTitle : rawTitle;
@@ -173,6 +176,22 @@ Schema:
             .map((e) => CanonCharacter.fromJson(e.cast<String, dynamic>()))
             .where((c) => c.name.trim().isNotEmpty)
             .toList();
+
+    final rawRelations =
+        ((map['relations'] ?? map['edges']) as List? ?? const [])
+            .whereType<Map>()
+            .map((e) => CanonRelationEdge.fromJson(e.cast<String, dynamic>()))
+            .where(
+              (r) =>
+                  r.from.trim().isNotEmpty &&
+                  r.to.trim().isNotEmpty &&
+                  r.from.trim() != r.to.trim(),
+            )
+            .toList();
+
+    final relations = rawRelations.isNotEmpty
+        ? rawRelations
+        : _synthesizeRelationsFromCharacters(characters);
 
     final timeline =
         ((map['timeline'] ?? map['events']) as List? ?? const [])
@@ -219,12 +238,45 @@ Schema:
       title: title,
       author: (rawAuthor == null || rawAuthor.isEmpty) ? null : rawAuthor,
       characters: characters,
+      relations: relations,
       timeline: timeline,
       worldbuilding: worldbuilding,
       openThreads: openThreads,
       activeArcs: activeArcs,
       continuationFromChapter: continuationFromChapter,
+      continuationFromTitle: continuationFromTitle,
     );
+  }
+
+  static List<CanonRelationEdge> _synthesizeRelationsFromCharacters(
+    List<CanonCharacter> characters,
+  ) {
+    final seen = <String>{};
+    final out = <CanonRelationEdge>[];
+    for (final c in characters) {
+      final from = c.name.trim();
+      if (from.isEmpty) continue;
+      for (final rel in c.relationships) {
+        final to = rel.target.trim();
+        final desc = rel.relation.trim();
+        if (to.isEmpty || to == from || desc.isEmpty) continue;
+        final key = from.compareTo(to) <= 0 ? '$from||$to' : '$to||$from';
+        if (!seen.add(key)) continue;
+        final label = desc.length > 10 ? '${desc.substring(0, 10)}…' : desc;
+        out.add(
+          CanonRelationEdge(
+            from: from,
+            to: to,
+            relationType: normalizeRelationType(desc),
+            label: label,
+            description: desc,
+            strength: 3,
+            line: '明线',
+          ),
+        );
+      }
+    }
+    return out;
   }
 
   static String _formatMicro(int index, MicroSummary m) {
