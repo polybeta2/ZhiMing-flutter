@@ -41,7 +41,15 @@ class OpenAiSseClient implements LLMClient {
     _unsupportedExtensionEndpoints.clear();
   }
 
-  String get _endpointCacheKey => '$_baseUrl|${model.trim()}';
+  String _extensionCacheKey(ReasoningEffort? effort) =>
+      '$_baseUrl|${model.trim()}|${effort?.wireValue ?? 'default'}';
+
+  static bool _looksLikeEffortRejection(String body) {
+    final lower = body.toLowerCase();
+    return lower.contains('reasoning_effort') ||
+        lower.contains('reasoning') ||
+        lower.contains('effort');
+  }
 
   static Dio _createDio(String? proxyUrl) {
     final dio = Dio(
@@ -113,9 +121,7 @@ class OpenAiSseClient implements LLMClient {
     final uri = _buildEndpoint('chat/completions');
     final resolvedEffort = config.reasoningEffort ?? defaultReasoningEffort;
     final isThinkingEnabled =
-        resolvedEffort == ReasoningEffort.low ||
-        resolvedEffort == ReasoningEffort.medium ||
-        resolvedEffort == ReasoningEffort.high;
+        resolvedEffort != null && resolvedEffort.isThinkingEnabled;
     final resolvedMaxTokens =
         (isThinkingEnabled &&
             config.maxTokens >= 12288 &&
@@ -131,8 +137,9 @@ class OpenAiSseClient implements LLMClient {
       enablePromptCacheControl: config.enablePromptCacheControl,
     );
 
+    final extCacheKey = _extensionCacheKey(resolvedEffort);
     var allowOptionalExtensions =
-        !_unsupportedExtensionEndpoints.contains(_endpointCacheKey);
+        !_unsupportedExtensionEndpoints.contains(extCacheKey);
     final hasOptionalExtensions =
         resolvedConfig.jsonMode ||
         resolvedConfig.reasoningEffort != null ||
@@ -213,11 +220,29 @@ class OpenAiSseClient implements LLMClient {
         }
         if ((status == 400 || status == 422) &&
             allowOptionalExtensions &&
-            hasOptionalExtensions &&
-            attempt < maxPreTokenAttempts - 1) {
-          _unsupportedExtensionEndpoints.add(_endpointCacheKey);
-          allowOptionalExtensions = false;
-          continue;
+            hasOptionalExtensions) {
+          final errBody = buffer.toString();
+          // 扩展高档位（Xhigh / Max / Ultra）被端点明确拒绝时，直接给出清晰提示便于用户改选可用档位，
+          // 不静默吞掉也不污染标准档位缓存。
+          if (resolvedEffort != null &&
+              resolvedEffort.isExtendedTier &&
+              _looksLikeEffortRejection(errBody)) {
+            final safe = LLMException.redactCredentials(errBody);
+            final clipped = safe.length > 200
+                ? '${safe.substring(0, 200)}…'
+                : safe;
+            throw LLMException(
+              '当前 API 端点不支持 Effort「${resolvedEffort.label}」'
+              '（${resolvedEffort.wireValue}），请在 Effort 选择条改选其他档位。'
+              '服务端返回：$clipped',
+              statusCode: status,
+            );
+          }
+          if (attempt < maxPreTokenAttempts - 1) {
+            _unsupportedExtensionEndpoints.add(extCacheKey);
+            allowOptionalExtensions = false;
+            continue;
+          }
         }
         if (attempt < maxPreTokenAttempts - 1 && _isRetryableStatus(status)) {
           await _retryBackoff(attempt, cancelToken);
@@ -360,12 +385,21 @@ class OpenAiSseClient implements LLMClient {
 
   @override
   Future<List<String>> fetchModelIds({CancelToken? cancelToken}) async {
+    final res = await fetchModelsWithCapabilities(cancelToken: cancelToken);
+    return res.modelIds;
+  }
+
+  /// 拉取 `/models` 列表并同时解析各模型可能附带的 Effort 能力元数据
+  Future<
+    ({List<String> modelIds, Map<String, EffortCapabilities> capabilities})
+  >
+  fetchModelsWithCapabilities({CancelToken? cancelToken}) async {
     final uri = _buildEndpoint('models');
     final response = await _dio.getUri<dynamic>(
       uri,
       cancelToken: cancelToken,
       options: Options(
-        receiveTimeout: const Duration(seconds: 30),
+        receiveTimeout: const Duration(seconds: 20),
         validateStatus: (_) => true,
         headers: {'Authorization': 'Bearer $apiKey'},
       ),
@@ -381,13 +415,203 @@ class OpenAiSseClient implements LLMClient {
       throw LLMException.decoding('$data');
     }
     final ids = <String>[];
+    final capabilities = <String, EffortCapabilities>{};
     for (final item in data['data'] as List) {
       if (item is Map && item['id'] is String) {
-        ids.add(item['id'] as String);
+        final id = item['id'] as String;
+        ids.add(id);
+        final cap = parseSupportedEffortsFromModelObject(item);
+        if (cap.fromEndpoint) {
+          capabilities[id] = cap;
+        }
       }
     }
     ids.sort();
-    return ids;
+    return (modelIds: ids, capabilities: capabilities);
+  }
+
+  /// 探测当前 `model` 在该端点支持的 Effort 档位：
+  /// 1) 优先读取 `GET /models` 中对应模型对象（顺带缓存同端点所有声明了能力字段的模型）；
+  /// 2) 若未声明，再尝试 `GET /models/{model}`（部分网关仅在单模型详情接口返回能力元数据）；
+  /// 3) 均未声明或请求异常时安全回退为 [EffortCapabilities.fallbackAll]（UI 展示全部 7 档）。
+  Future<
+    ({
+      EffortCapabilities target,
+      Map<String, EffortCapabilities> allDiscovered,
+    })
+  >
+  probeModelEffortCapabilities({CancelToken? cancelToken}) async {
+    final targetModel = model.trim();
+    final discovered = <String, EffortCapabilities>{};
+    try {
+      final res = await fetchModelsWithCapabilities(cancelToken: cancelToken);
+      discovered.addAll(res.capabilities);
+      final matched = _matchCapability(discovered, targetModel);
+      if (matched != null && matched.fromEndpoint) {
+        return (target: matched, allDiscovered: discovered);
+      }
+    } catch (_) {
+      // 忽略 /models 失败，继续尝试单模型接口或直接回退全档位
+    }
+
+    if (targetModel.isNotEmpty && !(cancelToken?.isCancelled ?? false)) {
+      try {
+        final singleUri = _buildEndpoint(
+          'models/${Uri.encodeComponent(targetModel)}',
+        );
+        final resp = await _dio.getUri<dynamic>(
+          singleUri,
+          cancelToken: cancelToken,
+          options: Options(
+            receiveTimeout: const Duration(seconds: 8),
+            validateStatus: (_) => true,
+            headers: {'Authorization': 'Bearer $apiKey'},
+          ),
+        );
+        if ((resp.statusCode ?? 0) == 200 && resp.data != null) {
+          final parsed = resp.data is String
+              ? jsonDecode(resp.data as String)
+              : resp.data;
+          if (parsed is Map) {
+            final cap = parseSupportedEffortsFromModelObject(parsed);
+            if (cap.fromEndpoint) {
+              discovered[targetModel] = cap;
+              return (target: cap, allDiscovered: discovered);
+            }
+          }
+        }
+      } catch (_) {}
+    }
+
+    return (
+      target: const EffortCapabilities.fallbackAll(),
+      allDiscovered: discovered,
+    );
+  }
+
+  static EffortCapabilities? _matchCapability(
+    Map<String, EffortCapabilities> map,
+    String targetModel,
+  ) {
+    if (map.containsKey(targetModel)) return map[targetModel];
+    final lower = targetModel.toLowerCase();
+    for (final entry in map.entries) {
+      if (entry.key.toLowerCase() == lower) return entry.value;
+    }
+    return null;
+  }
+
+  /// 从任意 OpenAI 兼容网关返回的单条模型元数据 JSON 中提取可用 Effort 档位。
+  /// 兼容 OpenAI / OpenRouter / LiteLLM / NewAPI / OneAPI / 自定义网关的常见字段结构。
+  static EffortCapabilities parseSupportedEffortsFromModelObject(
+    Map<dynamic, dynamic> obj,
+  ) {
+    final rawStrings = <String>[];
+    final found = <ReasoningEffort>[];
+
+    void collectValues(dynamic value) {
+      if (value is List) {
+        for (final item in value) {
+          if (item is String && item.trim().isNotEmpty) {
+            rawStrings.add(item.trim());
+            final parsed = ReasoningEffort.tryParse(item);
+            if (parsed != null && !found.contains(parsed)) {
+              found.add(parsed);
+            }
+          } else if (item is Map) {
+            final v = item['value'] ?? item['id'] ?? item['name'];
+            if (v is String && v.trim().isNotEmpty) {
+              rawStrings.add(v.trim());
+              final parsed = ReasoningEffort.tryParse(v);
+              if (parsed != null && !found.contains(parsed)) {
+                found.add(parsed);
+              }
+            }
+          }
+        }
+      } else if (value is Map) {
+        for (final k in const [
+          'enum',
+          'values',
+          'options',
+          'supported',
+          'allowed',
+          'levels',
+          'efforts',
+        ]) {
+          if (value.containsKey(k)) {
+            collectValues(value[k]);
+          }
+        }
+      }
+    }
+
+    const effortListKeys = <String>{
+      'supported_reasoning_efforts',
+      'reasoning_efforts',
+      'reasoning_effort_levels',
+      'allowed_reasoning_efforts',
+      'reasoning_effort_values',
+      'effort_levels',
+      'supported_efforts',
+      'efforts',
+      'reasoning_effort',
+      'effort',
+    };
+
+    const nestedContainers = <String>{
+      'capabilities',
+      'parameters',
+      'extra_params',
+      'reasoning',
+      'metadata',
+      'config',
+      'model_info',
+      'data',
+    };
+
+    void scanMap(Map<dynamic, dynamic> map, int depth) {
+      if (depth > 4) return;
+      for (final entry in map.entries) {
+        final key = entry.key.toString().toLowerCase();
+        final val = entry.value;
+        if (effortListKeys.contains(key)) {
+          if (val is List || val is Map) {
+            collectValues(val);
+          }
+        }
+        if (val is Map && nestedContainers.contains(key)) {
+          scanMap(val, depth + 1);
+        }
+      }
+    }
+
+    scanMap(obj, 0);
+
+    if (found.isEmpty) {
+      return const EffortCapabilities.fallbackAll();
+    }
+
+    // 保持标准顺序（OFF -> Low -> Medium -> High -> Xhigh -> Max -> Ultra；若有 minimal 保留在 OFF 与 Low 之间）
+    const canonicalOrder = [
+      ReasoningEffort.none,
+      ReasoningEffort.minimal,
+      ReasoningEffort.low,
+      ReasoningEffort.medium,
+      ReasoningEffort.high,
+      ReasoningEffort.xhigh,
+      ReasoningEffort.max,
+      ReasoningEffort.ultra,
+    ];
+    final ordered = [
+      for (final tier in canonicalOrder)
+        if (found.contains(tier)) tier,
+    ];
+    return EffortCapabilities(
+      supportedEfforts: ordered,
+      fromEndpoint: true,
+      rawValues: rawStrings,
+    );
   }
 
   /// 提取单帧 SSE 中的 `choices[0].finish_reason`

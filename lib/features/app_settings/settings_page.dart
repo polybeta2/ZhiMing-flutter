@@ -7,6 +7,7 @@ import '../../core/platform/background_keep_alive.dart';
 import '../../core/prompts/prompt_defaults.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/theme/design_tokens.dart';
+import '../../core/widgets/effort_selector_bar.dart';
 import '../../core/widgets/zm_widgets.dart';
 
 /// 设置页：Kelivo 分组卡片（模型与服务 / 外观与编辑器 / 开发者工坊 / 关于）
@@ -348,42 +349,67 @@ class SettingsPage extends ConsumerWidget {
       builder: (ctx) => Consumer(
         builder: (ctx, dialogRef, _) {
           final current = dialogRef.watch(reasoningPreferenceProvider);
+          final defaultProvider = dialogRef.watch(defaultProviderProvider);
           return AlertDialog(
-            title: const Text('推理思考模式'),
+            title: const Text('推理努力程度（Effort）'),
             content: SizedBox(
               width: double.maxFinite,
               child: SingleChildScrollView(
-                child: RadioGroup<ReasoningPreference>(
-                  groupValue: current,
-                  onChanged: (val) async {
-                    if (val == null) return;
-                    await dialogRef
-                        .read(reasoningPreferenceProvider.notifier)
-                        .setPreference(val);
-                    if (ctx.mounted) Navigator.of(ctx).pop();
-                  },
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      for (final p in ReasoningPreference.values)
-                        RadioListTile<ReasoningPreference>(
-                          value: p,
-                          contentPadding: EdgeInsets.zero,
-                          title: Text(p.label),
-                          subtitle: Text(
-                            p.description,
-                            style: Theme.of(ctx).textTheme.bodySmall,
-                          ),
-                        ),
-                    ],
-                  ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    EffortSelectorBar(
+                      title: '快捷选择 Effort 档位',
+                      value: current.directEffort,
+                      provider: defaultProvider,
+                      allowFollowDefault: true,
+                      followDefaultLabel: '跟随模型默认',
+                      onChanged: (effort) async {
+                        await dialogRef
+                            .read(reasoningPreferenceProvider.notifier)
+                            .setPreference(
+                              ReasoningPreference.fromEffort(effort),
+                            );
+                      },
+                    ),
+                    const SizedBox(height: 10),
+                    const Divider(height: 1),
+                    const SizedBox(height: 6),
+                    RadioGroup<ReasoningPreference>(
+                      groupValue: current,
+                      onChanged: (val) async {
+                        if (val == null) return;
+                        await dialogRef
+                            .read(reasoningPreferenceProvider.notifier)
+                            .setPreference(val);
+                        if (ctx.mounted) Navigator.of(ctx).pop();
+                      },
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          for (final p in ReasoningPreference.values)
+                            RadioListTile<ReasoningPreference>(
+                              value: p,
+                              dense: true,
+                              contentPadding: EdgeInsets.zero,
+                              title: Text(p.label),
+                              subtitle: Text(
+                                p.description,
+                                style: Theme.of(ctx).textTheme.bodySmall,
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+                  ],
                 ),
               ),
             ),
             actions: [
               TextButton(
                 onPressed: () => Navigator.of(ctx).pop(),
-                child: const Text('关闭'),
+                child: const Text('完成'),
               ),
             ],
           );
@@ -469,12 +495,12 @@ class SettingsPage extends ConsumerWidget {
                     tint: Colors.indigo,
                   ),
                   title: const Text(
-                    '推理思考模式',
+                    '推理努力程度（Effort）',
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                   ),
                   subtitle: Text(
-                    '当前：${reasoningPref.label}',
+                    '全局默认：${reasoningPref.label}',
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                   ),

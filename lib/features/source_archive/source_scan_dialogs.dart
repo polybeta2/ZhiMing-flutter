@@ -14,6 +14,7 @@ import '../../core/security/api_key_vault.dart';
 import '../../core/storage/blob_store.dart';
 import '../../core/theme/design_tokens.dart';
 import '../../core/utils/text_encoding.dart';
+import '../../core/widgets/effort_selector_bar.dart';
 import '../../core/widgets/streaming_status_chip.dart';
 import '../../core/widgets/zm_widgets.dart';
 import '../../domain/models/source_profile_models.dart';
@@ -37,6 +38,7 @@ class SourceScanProgressDialog extends ConsumerStatefulWidget {
     required this.initialProvider,
     this.fastProvider,
     this.presetProfileId,
+    this.effortOverride,
   });
 
   final String sourceText;
@@ -48,6 +50,7 @@ class SourceScanProgressDialog extends ConsumerStatefulWidget {
   final ProviderRecord initialProvider;
   final ProviderRecord? fastProvider;
   final String? presetProfileId;
+  final ReasoningEffort? effortOverride;
 
   static Future<SourceNovelProfileData?> show(
     BuildContext context, {
@@ -60,6 +63,7 @@ class SourceScanProgressDialog extends ConsumerStatefulWidget {
     required ProviderRecord initialProvider,
     ProviderRecord? fastProvider,
     String? presetProfileId,
+    ReasoningEffort? effortOverride,
   }) {
     return showDialog<SourceNovelProfileData>(
       context: context,
@@ -74,6 +78,7 @@ class SourceScanProgressDialog extends ConsumerStatefulWidget {
         initialProvider: initialProvider,
         fastProvider: fastProvider,
         presetProfileId: presetProfileId,
+        effortOverride: effortOverride,
       ),
     );
   }
@@ -89,6 +94,7 @@ class _SourceScanProgressDialogState
   late ProviderRecord _provider;
   ProviderRecord? _fastProvider;
   String? _activeProfileId;
+  ReasoningEffort? _effortOverride;
 
   @override
   void initState() {
@@ -96,6 +102,7 @@ class _SourceScanProgressDialogState
     _provider = widget.initialProvider;
     _fastProvider = widget.fastProvider;
     _activeProfileId = widget.presetProfileId ?? const Uuid().v4();
+    _effortOverride = widget.effortOverride;
     WidgetsBinding.instance.addPostFrameCallback((_) => _startOrResume());
   }
 
@@ -109,6 +116,7 @@ class _SourceScanProgressDialogState
       final fc = await createClientForProvider(
         candidate,
         ref.read(apiKeyVaultProvider),
+        defaultReasoningEffort: _effortOverride,
       );
       return (provider: candidate, client: fc);
     } catch (_) {
@@ -121,6 +129,7 @@ class _SourceScanProgressDialogState
       final client = await createClientForProvider(
         _provider,
         ref.read(apiKeyVaultProvider),
+        defaultReasoningEffort: _effortOverride,
       );
       final fast = await _resolveSeparateFast(_provider);
       if (!mounted) return;
@@ -132,6 +141,7 @@ class _SourceScanProgressDialogState
           provider: _provider,
           fastClient: fast.client,
           fastProvider: fast.provider,
+          effortOverride: _effortOverride,
         )..addListener(_onTick);
       } else {
         _ctrl!.updateProvider(
@@ -139,6 +149,8 @@ class _SourceScanProgressDialogState
           client,
           nextFastProvider: fast.provider ?? _provider,
           nextFastClient: fast.client ?? client,
+          nextEffortOverride: _effortOverride,
+          updateEffortOverride: true,
         );
       }
       setState(() {});
@@ -181,6 +193,7 @@ class _SourceScanProgressDialogState
       final client = await createClientForProvider(
         picked,
         ref.read(apiKeyVaultProvider),
+        defaultReasoningEffort: _effortOverride,
       );
       final fast = await _resolveSeparateFast(picked);
       _ctrl?.updateProvider(
@@ -188,6 +201,8 @@ class _SourceScanProgressDialogState
         client,
         nextFastProvider: fast.provider ?? picked,
         nextFastClient: fast.client ?? client,
+        nextEffortOverride: _effortOverride,
+        updateEffortOverride: true,
       );
     } catch (e) {
       if (mounted) showZmSnackBar(context, '切换模型失败：$e', isError: true);
@@ -360,6 +375,15 @@ class _SourceScanProgressDialogState
                   },
                 ),
               ],
+            ],
+            if (phase == ScanPhase.paused || phase == ScanPhase.failed) ...[
+              const SizedBox(height: 10),
+              EffortSelectorBar(
+                value: _effortOverride,
+                provider: _provider,
+                compact: true,
+                onChanged: (v) => setState(() => _effortOverride = v),
+              ),
             ],
             if (ctrl?.errorMessage != null) ...[
               const SizedBox(height: 12),
@@ -740,6 +764,7 @@ class _ContinuationImportDialogState
   ScanMode _mode = ScanMode.evidence;
   int _batchSize = 10;
   int _concurrency = 6;
+  ReasoningEffort? _effortOverride;
   bool _loadingFile = false;
 
   Future<void> _pickFile() async {
@@ -884,6 +909,7 @@ class _ContinuationImportDialogState
         isContinuation: true,
         initialProvider: provider,
         fastProvider: ref.read(fastToolProviderProvider),
+        effortOverride: _effortOverride,
       );
     }
     if (mounted && profile != null) {
@@ -1119,6 +1145,13 @@ class _ContinuationImportDialogState
                           },
                         ),
                       ],
+                      const SizedBox(height: 12),
+                      EffortSelectorBar(
+                        value: _effortOverride,
+                        provider: ref.watch(defaultProviderProvider),
+                        compact: true,
+                        onChanged: (v) => setState(() => _effortOverride = v),
+                      ),
                     ],
                   ],
                 ),

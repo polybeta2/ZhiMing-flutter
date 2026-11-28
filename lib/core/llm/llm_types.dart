@@ -10,14 +10,113 @@ enum LLMRole {
 }
 
 enum ReasoningEffort {
-  none('none'),
-  minimal('minimal'),
-  low('low'),
-  medium('medium'),
-  high('high');
+  none('none', 'OFF'),
+  minimal('minimal', 'Minimal'),
+  low('low', 'Low'),
+  medium('medium', 'Medium'),
+  high('high', 'High'),
+  xhigh('xhigh', 'Xhigh'),
+  max('max', 'Max'),
+  ultra('ultra', 'Ultra');
 
-  const ReasoningEffort(this.wireValue);
+  const ReasoningEffort(this.wireValue, this.label);
   final String wireValue;
+  final String label;
+
+  /// UI 公开展示的 7 档标准努力程度：OFF / Low / Medium / High / Xhigh / Max / Ultra
+  static const List<ReasoningEffort> selectableTiers = [
+    none,
+    low,
+    medium,
+    high,
+    xhigh,
+    max,
+    ultra,
+  ];
+
+  /// 是否开启了推理思考（非 OFF）
+  bool get isThinkingEnabled => this != ReasoningEffort.none;
+
+  /// 是否属于扩展高档位（部分网关仅支持到 high，遇 400/422 时应显式提示而非静默降级）
+  bool get isExtendedTier =>
+      this == ReasoningEffort.xhigh ||
+      this == ReasoningEffort.max ||
+      this == ReasoningEffort.ultra;
+
+  /// 宽松解析端点或本地缓存中的 effort 字符串
+  static ReasoningEffort? tryParse(String? raw) {
+    if (raw == null) return null;
+    final normalized = raw
+        .trim()
+        .toLowerCase()
+        .replaceAll('-', '_')
+        .replaceAll(' ', '_');
+    return switch (normalized) {
+      'none' || 'off' || 'disabled' || 'disable' || '0' => ReasoningEffort.none,
+      'minimal' || 'min' => ReasoningEffort.minimal,
+      'low' => ReasoningEffort.low,
+      'medium' || 'med' || 'mid' || 'normal' => ReasoningEffort.medium,
+      'high' => ReasoningEffort.high,
+      'xhigh' || 'x_high' || 'extra_high' || 'very_high' =>
+        ReasoningEffort.xhigh,
+      'max' || 'maximum' => ReasoningEffort.max,
+      'ultra' => ReasoningEffort.ultra,
+      _ => null,
+    };
+  }
+}
+
+/// 端点 Effort 能力探测结果：
+/// - 若端点在 `/models` 或 `/models/{id}` 中明确声明了支持的档位，则 [fromEndpoint] 为 true，UI 仅展示声明档位；
+/// - 否则 [fromEndpoint] 为 false，[displayEfforts] 回退为全部 7 档供用户自行尝试。
+class EffortCapabilities {
+  const EffortCapabilities({
+    required this.supportedEfforts,
+    required this.fromEndpoint,
+    this.rawValues = const [],
+  });
+
+  const EffortCapabilities.fallbackAll()
+    : supportedEfforts = const [],
+      fromEndpoint = false,
+      rawValues = const [];
+
+  final List<ReasoningEffort> supportedEfforts;
+  final bool fromEndpoint;
+  final List<String> rawValues;
+
+  List<ReasoningEffort> get displayEfforts =>
+      (fromEndpoint && supportedEfforts.isNotEmpty)
+      ? supportedEfforts
+      : ReasoningEffort.selectableTiers;
+
+  Map<String, dynamic> toJson() => {
+    'supported': [for (final e in supportedEfforts) e.wireValue],
+    'fromEndpoint': fromEndpoint,
+    if (rawValues.isNotEmpty) 'rawValues': rawValues,
+  };
+
+  factory EffortCapabilities.fromJson(Map<String, dynamic> json) {
+    final fromEndpoint = json['fromEndpoint'] == true;
+    final rawList = json['supported'];
+    final parsed = <ReasoningEffort>[];
+    if (rawList is List) {
+      for (final item in rawList) {
+        final e = ReasoningEffort.tryParse(item?.toString());
+        if (e != null && !parsed.contains(e)) {
+          parsed.add(e);
+        }
+      }
+    }
+    final rawValues = json['rawValues'] is List
+        ? (json['rawValues'] as List).map((e) => e.toString()).toList()
+        : const <String>[];
+    return EffortCapabilities(
+      supportedEfforts: parsed,
+      fromEndpoint: fromEndpoint && parsed.isNotEmpty,
+      rawValues: rawValues,
+    );
+  }
 }
 
 class LLMMessage {

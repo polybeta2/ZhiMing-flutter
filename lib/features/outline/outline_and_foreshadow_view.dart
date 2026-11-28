@@ -18,6 +18,7 @@ import '../../core/prompts/prompt_templates.dart';
 import '../../core/security/api_key_vault.dart';
 import '../../core/theme/design_tokens.dart';
 import '../../core/utils/prompt_guard.dart';
+import '../../core/widgets/effort_selector_bar.dart';
 import '../../core/widgets/story_timeline_view.dart';
 import '../../core/widgets/streaming_status_chip.dart';
 import '../../core/widgets/zm_widgets.dart';
@@ -109,6 +110,7 @@ class _OutlineListPaneState extends ConsumerState<_OutlineListPane> {
   CancelToken? _cancel;
   bool _batchRunning = false;
   String _batchLabel = '';
+  ReasoningEffort? _batchEffort;
 
   @override
   void dispose() {
@@ -274,6 +276,7 @@ class _OutlineListPaneState extends ConsumerState<_OutlineListPane> {
       final client = await createClientForProvider(
         provider,
         ref.read(apiKeyVaultProvider),
+        defaultReasoningEffort: _batchEffort,
       );
       final buf = StringBuffer();
       await for (final ev in client.streamChat(
@@ -347,6 +350,23 @@ class _OutlineListPaneState extends ConsumerState<_OutlineListPane> {
       ),
       body: Column(
         children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(
+              AppTokens.s4,
+              0,
+              AppTokens.s4,
+              4,
+            ),
+            child: Align(
+              alignment: Alignment.centerRight,
+              child: EffortCompactChip(
+                value: _batchEffort,
+                provider: ref.watch(defaultProviderProvider),
+                enabled: !_batchRunning,
+                onChanged: (v) => setState(() => _batchEffort = v),
+              ),
+            ),
+          ),
           if (_batchRunning)
             Padding(
               padding: const EdgeInsets.symmetric(
@@ -673,6 +693,7 @@ class _VolumeEditDialogState extends ConsumerState<_VolumeEditDialog> {
   final _progress = StreamProgressTracker();
   CancelToken? _cancel;
   bool _generating = false;
+  ReasoningEffort? _effort;
 
   @override
   void initState() {
@@ -748,6 +769,7 @@ class _VolumeEditDialogState extends ConsumerState<_VolumeEditDialog> {
       final client = await createClientForProvider(
         provider,
         ref.read(apiKeyVaultProvider),
+        defaultReasoningEffort: _effort,
       );
       final buf = StringBuffer();
       await for (final ev in client.streamChat(
@@ -883,6 +905,14 @@ class _VolumeEditDialogState extends ConsumerState<_VolumeEditDialog> {
                           label: const Text('AI 生成'),
                         ),
                       ],
+                    ),
+                    const SizedBox(height: 8),
+                    EffortSelectorBar(
+                      value: _effort,
+                      provider: ref.watch(defaultProviderProvider),
+                      enabled: !_generating,
+                      compact: true,
+                      onChanged: (v) => setState(() => _effort = v),
                     ),
                     if (_generating) ...[
                       const SizedBox(height: 8),
@@ -1048,6 +1078,7 @@ class _ChapterOutlineEditDialogState
   final _progress = StreamProgressTracker();
   CancelToken? _cancel;
   bool _generating = false;
+  ReasoningEffort? _effort;
 
   @override
   void initState() {
@@ -1116,6 +1147,7 @@ class _ChapterOutlineEditDialogState
       final client = await createClientForProvider(
         provider,
         ref.read(apiKeyVaultProvider),
+        defaultReasoningEffort: _effort,
       );
       final buf = StringBuffer();
       await for (final ev in client.streamChat(
@@ -1220,6 +1252,14 @@ class _ChapterOutlineEditDialogState
                           label: const Text('AI 生成'),
                         ),
                       ],
+                    ),
+                    const SizedBox(height: 8),
+                    EffortSelectorBar(
+                      value: _effort,
+                      provider: ref.watch(defaultProviderProvider),
+                      enabled: !_generating,
+                      compact: true,
+                      onChanged: (v) => setState(() => _effort = v),
                     ),
                     if (_generating) ...[
                       const SizedBox(height: 8),

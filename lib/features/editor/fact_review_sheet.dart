@@ -3,12 +3,14 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/database/app_database.dart';
+import '../../core/llm/llm_types.dart';
 import '../../core/llm/provider_client_factory.dart';
 import '../../core/llm/stream_progress.dart';
 import '../../core/prompts/prompt_library.dart';
 import '../../core/security/api_key_vault.dart';
 import '../../core/theme/design_tokens.dart';
 import '../../core/widgets/diff_preview_dialog.dart';
+import '../../core/widgets/effort_selector_bar.dart';
 import '../../core/widgets/streaming_status_chip.dart';
 import '../../core/widgets/zm_widgets.dart';
 import '../../domain/writing/fact_review_service.dart';
@@ -24,6 +26,7 @@ class FactReviewSheet extends ConsumerStatefulWidget {
     required this.chapterTitle,
     required this.truthArchive,
     required this.provider,
+    this.initialEffort,
     this.onApply,
   });
 
@@ -31,6 +34,7 @@ class FactReviewSheet extends ConsumerStatefulWidget {
   final String chapterTitle;
   final String truthArchive;
   final ProviderRecord provider;
+  final ReasoningEffort? initialEffort;
   final Future<void> Function(String fixedText)? onApply;
 
   @override
@@ -45,6 +49,7 @@ class _FactReviewSheetState extends ConsumerState<FactReviewSheet> {
 
   FactReviewResult? _result;
   final Set<int> _selectedIssueIndices = {};
+  ReasoningEffort? _effort;
   String? _error;
   bool _running = false;
   bool _fixing = false;
@@ -52,6 +57,7 @@ class _FactReviewSheetState extends ConsumerState<FactReviewSheet> {
   @override
   void initState() {
     super.initState();
+    _effort = widget.initialEffort;
     _runReview();
   }
 
@@ -78,6 +84,7 @@ class _FactReviewSheetState extends ConsumerState<FactReviewSheet> {
       final client = await createClientForProvider(
         widget.provider,
         ref.read(apiKeyVaultProvider),
+        defaultReasoningEffort: _effort,
       );
       final service = FactReviewService(
         client: client,
@@ -128,6 +135,7 @@ class _FactReviewSheetState extends ConsumerState<FactReviewSheet> {
       final client = await createClientForProvider(
         widget.provider,
         ref.read(apiKeyVaultProvider),
+        defaultReasoningEffort: _effort,
       );
       final service = FactReviewService(
         client: client,
@@ -184,10 +192,18 @@ class _FactReviewSheetState extends ConsumerState<FactReviewSheet> {
                 Expanded(
                   child: Text(
                     '5 维事实审稿 · ${widget.chapterTitle}',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                     style: Theme.of(context).textTheme.titleMedium?.copyWith(
                       fontWeight: FontWeight.w600,
                     ),
                   ),
+                ),
+                EffortCompactChip(
+                  value: _effort,
+                  provider: widget.provider,
+                  enabled: !_running && !_fixing,
+                  onChanged: (v) => setState(() => _effort = v),
                 ),
                 TextButton(
                   onPressed: _running || _fixing ? null : _runReview,

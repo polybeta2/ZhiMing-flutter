@@ -11,6 +11,7 @@ import 'package:share_plus/share_plus.dart';
 
 import '../../core/database/app_database.dart';
 import '../../core/database/novel_repository.dart';
+import '../../core/llm/llm_types.dart';
 import '../../core/llm/provider_client_factory.dart';
 import '../../core/llm/stream_progress.dart';
 import '../../core/platform/background_keep_alive.dart';
@@ -18,6 +19,7 @@ import '../../core/prompts/prompt_library.dart';
 import '../../core/security/api_key_vault.dart';
 import '../../core/theme/design_tokens.dart';
 import '../../core/utils/text_encoding.dart';
+import '../../core/widgets/effort_selector_bar.dart';
 import '../../core/widgets/streaming_status_chip.dart';
 import '../../core/widgets/zm_widgets.dart';
 import '../../domain/models/style_models.dart';
@@ -431,6 +433,7 @@ class _StyleDistillSheetState extends ConsumerState<_StyleDistillSheet> {
   String? _cachedRaw;
   bool _running = false;
   String _stageText = '';
+  ReasoningEffort? _effort;
   String? _error;
   CancelToken? _cancel;
 
@@ -526,6 +529,7 @@ class _StyleDistillSheetState extends ConsumerState<_StyleDistillSheet> {
       final client = await createClientForProvider(
         provider,
         ref.read(apiKeyVaultProvider),
+        defaultReasoningEffort: _effort,
       );
       final service = StyleDistillationService(
         client: client,
@@ -690,6 +694,14 @@ class _StyleDistillSheetState extends ConsumerState<_StyleDistillSheet> {
               labelText: '来源备注（可选）',
               hintText: '例如：冷峻推理风样章',
             ),
+          ),
+          const SizedBox(height: 12),
+          EffortSelectorBar(
+            value: _effort,
+            provider: ref.watch(defaultProviderProvider),
+            enabled: !_running,
+            compact: true,
+            onChanged: (v) => setState(() => _effort = v),
           ),
           if (_running) ...[
             const SizedBox(height: 14),

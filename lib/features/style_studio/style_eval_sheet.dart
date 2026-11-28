@@ -3,12 +3,14 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/database/app_database.dart';
+import '../../core/llm/llm_types.dart';
 import '../../core/llm/provider_client_factory.dart';
 import '../../core/llm/stream_progress.dart';
 import '../../core/prompts/prompt_library.dart';
 import '../../core/security/api_key_vault.dart';
 import '../../core/theme/design_tokens.dart';
 import '../../core/widgets/diff_preview_dialog.dart';
+import '../../core/widgets/effort_selector_bar.dart';
 import '../../core/widgets/streaming_status_chip.dart';
 import '../../core/widgets/zm_widgets.dart';
 import '../../domain/models/style_models.dart';
@@ -23,6 +25,7 @@ class StyleEvalSheet extends ConsumerStatefulWidget {
     required this.chapterTitle,
     required this.evalCard,
     required this.provider,
+    this.initialEffort,
     this.onApply,
   });
 
@@ -30,6 +33,7 @@ class StyleEvalSheet extends ConsumerStatefulWidget {
   final String chapterTitle;
   final String evalCard;
   final ProviderRecord provider;
+  final ReasoningEffort? initialEffort;
   final ValueChanged<String>? onApply;
 
   @override
@@ -44,6 +48,7 @@ class _StyleEvalSheetState extends ConsumerState<StyleEvalSheet> {
   CancelToken? _fixCancel;
 
   StyleEvalResult? _result;
+  ReasoningEffort? _effort;
   String? _error;
   bool _running = false;
   bool _fixing = false;
@@ -51,6 +56,7 @@ class _StyleEvalSheetState extends ConsumerState<StyleEvalSheet> {
   @override
   void initState() {
     super.initState();
+    _effort = widget.initialEffort;
     _localReport = ProseChecker.reportLines(widget.draft).join('\n');
     _runEval();
   }
@@ -91,6 +97,7 @@ class _StyleEvalSheetState extends ConsumerState<StyleEvalSheet> {
       final client = await createClientForProvider(
         evalProvider,
         ref.read(apiKeyVaultProvider),
+        defaultReasoningEffort: _effort,
       );
       final evaluator = StyleEvaluator(
         client: client,
@@ -125,6 +132,7 @@ class _StyleEvalSheetState extends ConsumerState<StyleEvalSheet> {
       final client = await createClientForProvider(
         fixProvider,
         ref.read(apiKeyVaultProvider),
+        defaultReasoningEffort: _effort,
       );
       final evaluator = StyleEvaluator(
         client: client,
@@ -182,10 +190,18 @@ class _StyleEvalSheetState extends ConsumerState<StyleEvalSheet> {
                 Expanded(
                   child: Text(
                     '风格体检 · ${widget.chapterTitle}',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                     style: Theme.of(context).textTheme.titleMedium?.copyWith(
                       fontWeight: FontWeight.w600,
                     ),
                   ),
+                ),
+                EffortCompactChip(
+                  value: _effort,
+                  provider: _resolveProvider(preferFastTool: true),
+                  enabled: !_running && !_fixing,
+                  onChanged: (v) => setState(() => _effort = v),
                 ),
                 TextButton(
                   onPressed: _running || _fixing ? null : _runEval,

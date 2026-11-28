@@ -20,6 +20,7 @@ import '../../core/security/api_key_vault.dart';
 import '../../core/storage/blob_store.dart';
 import '../../core/theme/design_tokens.dart';
 import '../../core/utils/prompt_guard.dart';
+import '../../core/widgets/effort_selector_bar.dart';
 import '../../core/widgets/streaming_status_chip.dart';
 import '../../core/widgets/zm_widgets.dart';
 import '../../domain/creation/creation_session_engine.dart';
@@ -82,6 +83,7 @@ class _AssistantChatViewState extends ConsumerState<AssistantChatView> {
   ChatThread? _thread;
   CreationSessionEngine? _engine;
   ProviderRecord? _sessionProvider;
+  ReasoningEffort? _sessionEffort;
   AssistantAccessMode _accessMode = AssistantAccessMode.readOnly;
 
   bool _loading = true;
@@ -407,6 +409,7 @@ class _AssistantChatViewState extends ConsumerState<AssistantChatView> {
       final client = await createClientForProvider(
         provider,
         ref.read(apiKeyVaultProvider),
+        defaultReasoningEffort: _sessionEffort,
       );
       await for (final ev in client.streamChat(
         msgs,
@@ -582,6 +585,7 @@ class _AssistantChatViewState extends ConsumerState<AssistantChatView> {
       final client = await createClientForProvider(
         provider,
         ref.read(apiKeyVaultProvider),
+        defaultReasoningEffort: _sessionEffort,
       );
       var activeMsgs = List<LLMMessage>.from(msgs);
       var finalText = '';
@@ -779,22 +783,48 @@ class _AssistantChatViewState extends ConsumerState<AssistantChatView> {
                 _isCreation ? '立项共创助手' : '写作助手',
                 style: const TextStyle(fontWeight: FontWeight.w600),
               ),
-              const Spacer(),
-              ActionChip(
-                avatar: const Icon(Icons.memory_rounded, size: 15),
-                label: Text(
-                  activeProvider?.modelName ?? '未配模型',
-                  style: const TextStyle(fontSize: 12),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Align(
+                  alignment: Alignment.centerRight,
+                  child: SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        ActionChip(
+                          avatar: const Icon(Icons.memory_rounded, size: 15),
+                          label: ConstrainedBox(
+                            constraints: const BoxConstraints(maxWidth: 120),
+                            child: Text(
+                              activeProvider?.modelName ?? '未配模型',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(fontSize: 12),
+                            ),
+                          ),
+                          visualDensity: VisualDensity.compact,
+                          onPressed: () async {
+                            final picked = await showModelSelectorSheet(
+                              context,
+                              ref: ref,
+                              currentSessionProvider: _sessionProvider,
+                            );
+                            if (mounted) {
+                              setState(() => _sessionProvider = picked);
+                            }
+                          },
+                        ),
+                        const SizedBox(width: 6),
+                        EffortCompactChip(
+                          value: _sessionEffort,
+                          provider: activeProvider,
+                          onChanged: (v) => setState(() => _sessionEffort = v),
+                        ),
+                      ],
+                    ),
+                  ),
                 ),
-                visualDensity: VisualDensity.compact,
-                onPressed: () async {
-                  final picked = await showModelSelectorSheet(
-                    context,
-                    ref: ref,
-                    currentSessionProvider: _sessionProvider,
-                  );
-                  if (mounted) setState(() => _sessionProvider = picked);
-                },
               ),
               if (!_isCreation)
                 IconButton(

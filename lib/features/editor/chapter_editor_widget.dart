@@ -22,6 +22,7 @@ import '../../core/theme/app_theme.dart';
 import '../../core/theme/design_tokens.dart';
 import '../../core/utils/prompt_guard.dart';
 import '../../core/widgets/diff_preview_dialog.dart';
+import '../../core/widgets/effort_selector_bar.dart';
 import '../../core/widgets/streaming_status_chip.dart';
 import '../../core/widgets/zm_widgets.dart';
 import '../../domain/models/novel_domain.dart';
@@ -59,12 +60,14 @@ class _ContinueRequest {
     required this.wordTarget,
     required this.antiAIInline,
     this.instruction,
+    this.effort,
   });
 
   final bool isNewChapter;
   final int wordTarget;
   final bool antiAIInline;
   final String? instruction;
+  final ReasoningEffort? effort;
 }
 
 class _RewriteRequest {
@@ -72,11 +75,13 @@ class _RewriteRequest {
     required this.mode,
     required this.selection,
     this.instruction,
+    this.effort,
   });
 
   final String mode;
   final String selection;
   final String? instruction;
+  final ReasoningEffort? effort;
 }
 
 /// 增强章节编辑器：
@@ -137,6 +142,7 @@ class _ChapterEditorWidgetState extends ConsumerState<ChapterEditorWidget> {
   // 编辑器快捷工具
   bool _showFindBar = false;
   ProviderRecord? _sessionProvider;
+  ReasoningEffort? _sessionEffort;
   SessionStyleMode _sessionStyle = const FollowBookStyle();
 
   // AI 草稿流状态
@@ -325,6 +331,7 @@ class _ChapterEditorWidgetState extends ConsumerState<ChapterEditorWidget> {
     final prefs = await SharedPreferences.getInstance();
     var antiAI = prefs.getBool('writing.antiai.inline') ?? false;
     var wordTarget = isNew ? 2000 : 1500;
+    var effort = _sessionEffort;
     final instrCtrl = TextEditingController();
 
     if (!mounted) return;
@@ -335,10 +342,11 @@ class _ChapterEditorWidgetState extends ConsumerState<ChapterEditorWidget> {
           title: Text(isNew ? 'AI 撰写整章' : 'AI 续写'),
           content: SizedBox(
             width: 460,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
                 if (isNew && !hasOutline)
                   Container(
                     margin: const EdgeInsets.only(bottom: 12),
@@ -377,6 +385,13 @@ class _ChapterEditorWidgetState extends ConsumerState<ChapterEditorWidget> {
                     labelText: '附加指令（可选）',
                     hintText: isNew ? '例如：开篇以对话切入，节奏紧凑…' : '例如：本段偏动作推进，少写心理独白…',
                   ),
+                ),
+                const SizedBox(height: 10),
+                EffortSelectorBar(
+                  value: effort,
+                  provider: provider,
+                  compact: true,
+                  onChanged: (v) => setModal(() => effort = v),
                 ),
                 const SizedBox(height: 8),
                 SwitchListTile(
@@ -435,6 +450,7 @@ class _ChapterEditorWidgetState extends ConsumerState<ChapterEditorWidget> {
                 ),
               ],
             ),
+            ),
           ),
           actions: [
             TextButton(
@@ -453,6 +469,7 @@ class _ChapterEditorWidgetState extends ConsumerState<ChapterEditorWidget> {
                       instruction: instrCtrl.text.trim().isEmpty
                           ? null
                           : instrCtrl.text.trim(),
+                      effort: effort,
                     ),
                   );
                 }
@@ -465,6 +482,7 @@ class _ChapterEditorWidgetState extends ConsumerState<ChapterEditorWidget> {
     );
     instrCtrl.dispose();
     if (req != null) {
+      if (mounted) setState(() => _sessionEffort = req.effort);
       await _startContinue(req);
     }
   }
@@ -566,7 +584,7 @@ class _ChapterEditorWidgetState extends ConsumerState<ChapterEditorWidget> {
       _lastRewrite = null;
       _truncatedSections = ctx.truncatedSections;
     });
-    await _runDraftStream(provider, msgs);
+    await _runDraftStream(provider, msgs, effortOverride: req.effort);
   }
 
   // ---- 划词精修 / 改写 / 润色 / 扩写 / 去AI味 ----
@@ -581,6 +599,7 @@ class _ChapterEditorWidgetState extends ConsumerState<ChapterEditorWidget> {
         ? _selectedText
         : _textCtrl.text;
     var mode = presetMode;
+    var effort = _sessionEffort;
     final selCtrl = TextEditingController(text: initialSelection);
     final instrCtrl = TextEditingController();
 
@@ -591,43 +610,52 @@ class _ChapterEditorWidgetState extends ConsumerState<ChapterEditorWidget> {
           title: const Text('AI 精修'),
           content: SizedBox(
             width: 520,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                SegmentedButton<String>(
-                  segments: const [
-                    ButtonSegment(value: '改写', label: Text('改写')),
-                    ButtonSegment(value: '润色', label: Text('润色')),
-                    ButtonSegment(value: '扩写', label: Text('扩写')),
-                    ButtonSegment(value: '去AI味', label: Text('去AI味')),
-                  ],
-                  selected: {mode},
-                  onSelectionChanged: (s) => setModal(() => mode = s.first),
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: selCtrl,
-                  minLines: 4,
-                  maxLines: 8,
-                  decoration: InputDecoration(
-                    labelText: _selectedText.isNotEmpty
-                        ? '已自动带入编辑器选中片段（${_selectedText.length} 字）'
-                        : '待精修原文（未划词则默认全章）',
-                    alignLabelWithHint: true,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  SegmentedButton<String>(
+                    segments: const [
+                      ButtonSegment(value: '改写', label: Text('改写')),
+                      ButtonSegment(value: '润色', label: Text('润色')),
+                      ButtonSegment(value: '扩写', label: Text('扩写')),
+                      ButtonSegment(value: '去AI味', label: Text('去AI味')),
+                    ],
+                    selected: {mode},
+                    onSelectionChanged: (s) => setModal(() => mode = s.first),
                   ),
-                ),
-                const SizedBox(height: 10),
-                TextField(
-                  controller: instrCtrl,
-                  minLines: 1,
-                  maxLines: 3,
-                  decoration: const InputDecoration(
-                    labelText: '附加要求（可选）',
-                    hintText: '例如：削减形容词，增加环境细节…',
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: selCtrl,
+                    minLines: 4,
+                    maxLines: 8,
+                    decoration: InputDecoration(
+                      labelText: _selectedText.isNotEmpty
+                          ? '已自动带入编辑器选中片段（${_selectedText.length} 字）'
+                          : '待精修原文（未划词则默认全章）',
+                      alignLabelWithHint: true,
+                    ),
                   ),
-                ),
-              ],
+                  const SizedBox(height: 10),
+                  TextField(
+                    controller: instrCtrl,
+                    minLines: 1,
+                    maxLines: 3,
+                    decoration: const InputDecoration(
+                      labelText: '附加要求（可选）',
+                      hintText: '例如：削减形容词，增加环境细节…',
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  EffortSelectorBar(
+                    value: effort,
+                    provider: provider,
+                    compact: true,
+                    onChanged: (v) => setModal(() => effort = v),
+                  ),
+                ],
+              ),
             ),
           ),
           actions: [
@@ -645,6 +673,7 @@ class _ChapterEditorWidgetState extends ConsumerState<ChapterEditorWidget> {
                     instruction: instrCtrl.text.trim().isEmpty
                         ? null
                         : instrCtrl.text.trim(),
+                    effort: effort,
                   ),
                 );
               },
@@ -657,6 +686,7 @@ class _ChapterEditorWidgetState extends ConsumerState<ChapterEditorWidget> {
     selCtrl.dispose();
     instrCtrl.dispose();
     if (req != null) {
+      if (mounted) setState(() => _sessionEffort = req.effort);
       await _startRewrite(req);
     }
   }
@@ -713,13 +743,14 @@ class _ChapterEditorWidgetState extends ConsumerState<ChapterEditorWidget> {
       _lastContinue = null;
       _truncatedSections = const [];
     });
-    await _runDraftStream(provider, msgs);
+    await _runDraftStream(provider, msgs, effortOverride: req.effort);
   }
 
   Future<void> _runDraftStream(
     ProviderRecord provider,
-    List<LLMMessage> messages,
-  ) async {
+    List<LLMMessage> messages, {
+    ReasoningEffort? effortOverride,
+  }) async {
     _draftCancel?.cancel();
     _draftCancel = CancelToken();
     setState(() {
@@ -736,6 +767,7 @@ class _ChapterEditorWidgetState extends ConsumerState<ChapterEditorWidget> {
       final client = await createClientForProvider(
         provider,
         ref.read(apiKeyVaultProvider),
+        defaultReasoningEffort: effortOverride ?? _sessionEffort,
       );
       await for (final ev in client.streamChat(
         messages,
@@ -954,6 +986,7 @@ class _ChapterEditorWidgetState extends ConsumerState<ChapterEditorWidget> {
       final client = await createClientForProvider(
         provider,
         ref.read(apiKeyVaultProvider),
+        defaultReasoningEffort: _sessionEffort,
       );
       final raw = StringBuffer();
       await for (final ev in client.streamChat(
@@ -962,7 +995,7 @@ class _ChapterEditorWidgetState extends ConsumerState<ChapterEditorWidget> {
           temperature: 0.2,
           maxTokens: math.max(provider.maxTokens, 12288),
           jsonMode: true,
-          reasoningEffort: ReasoningEffort.none,
+          reasoningEffort: _sessionEffort ?? ReasoningEffort.none,
           enablePromptCacheControl: true,
         ),
         cancelToken: _summaryCancel,
@@ -1077,6 +1110,7 @@ class _ChapterEditorWidgetState extends ConsumerState<ChapterEditorWidget> {
         chapterTitle: ch.title,
         truthArchive: truthArchive,
         provider: provider,
+        initialEffort: _sessionEffort,
         onApply: (fixedText) async {
           await repo.takeSnapshot(
             chapterId: ch.id,
@@ -1394,12 +1428,19 @@ class _ChapterEditorWidgetState extends ConsumerState<ChapterEditorWidget> {
                                 ref: ref,
                                 currentSessionProvider: _sessionProvider,
                               );
-                              if (mounted) {
-                                setState(() => _sessionProvider = picked);
-                              }
-                            },
-                          ),
-                          const SizedBox(width: 4),
+                                if (mounted) {
+                                  setState(() => _sessionProvider = picked);
+                                }
+                              },
+                            ),
+                            const SizedBox(width: 6),
+                            EffortCompactChip(
+                              value: _sessionEffort,
+                              provider: activeProvider,
+                              onChanged: (v) =>
+                                  setState(() => _sessionEffort = v),
+                            ),
+                            const SizedBox(width: 4),
                           IconButton(
                             tooltip: '会话文风',
                             icon: Icon(

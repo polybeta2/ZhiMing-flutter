@@ -17,6 +17,7 @@ import '../../core/prompts/prompt_limits.dart';
 import '../../core/prompts/prompt_templates.dart';
 import '../../core/security/api_key_vault.dart';
 import '../../core/theme/design_tokens.dart';
+import '../../core/widgets/effort_selector_bar.dart';
 import '../../core/widgets/streaming_status_chip.dart';
 import '../../domain/models/novel_domain.dart';
 import '../../domain/writing/chapter_ledger.dart';
@@ -45,6 +46,7 @@ class AutoWriteSheet extends ConsumerStatefulWidget {
 
 class _AutoWriteSheetState extends ConsumerState<AutoWriteSheet> {
   int _wordTarget = 2000;
+  ReasoningEffort? _effort;
   bool _antiAIInline = true;
   bool _enableFactReviewGate = true;
   bool _running = false;
@@ -116,12 +118,14 @@ class _AutoWriteSheetState extends ConsumerState<AutoWriteSheet> {
       client = await createClientForProvider(
         provider,
         ref.read(apiKeyVaultProvider),
+        defaultReasoningEffort: _effort,
       );
       toolClient = toolProvider.id == provider.id
           ? client
           : await createClientForProvider(
               toolProvider,
               ref.read(apiKeyVaultProvider),
+              defaultReasoningEffort: _effort,
             );
     } catch (e) {
       setState(() => _error = '$e');
@@ -456,6 +460,15 @@ class _AutoWriteSheetState extends ConsumerState<AutoWriteSheet> {
               ),
             ],
           ),
+          const SizedBox(height: 12),
+          EffortSelectorBar(
+            value: _effort,
+            provider: ref.watch(defaultProviderProvider),
+            enabled: !_running,
+            compact: true,
+            onChanged: (v) => setState(() => _effort = v),
+          ),
+          const SizedBox(height: 4),
           SwitchListTile(
             contentPadding: EdgeInsets.zero,
             title: const Text('去AI味 · 写作时自动约束'),

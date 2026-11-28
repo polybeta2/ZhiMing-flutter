@@ -52,6 +52,7 @@ class SourceScanController extends ChangeNotifier {
     required this.provider,
     this.fastClient,
     this.fastProvider,
+    this.effortOverride,
   });
 
   final AppDatabase db;
@@ -60,6 +61,7 @@ class SourceScanController extends ChangeNotifier {
   ProviderRecord provider;
   LLMClient? fastClient;
   ProviderRecord? fastProvider;
+  ReasoningEffort? effortOverride;
 
   LLMClient get _mapClient => fastClient ?? client;
   ProviderRecord get _mapProvider => fastProvider ?? provider;
@@ -129,11 +131,14 @@ class SourceScanController extends ChangeNotifier {
     LLMClient nextClient, {
     ProviderRecord? nextFastProvider,
     LLMClient? nextFastClient,
+    ReasoningEffort? nextEffortOverride,
+    bool updateEffortOverride = false,
   }) {
     provider = nextProvider;
     client = nextClient;
     if (nextFastProvider != null) fastProvider = nextFastProvider;
     if (nextFastClient != null) fastClient = nextFastClient;
+    if (updateEffortOverride) effortOverride = nextEffortOverride;
     notifyListeners();
   }
 
@@ -316,19 +321,21 @@ class SourceScanController extends ChangeNotifier {
       notifyListeners();
 
       // 推理模型安全预算 + 结构化 JSON / 提示词缓存控制
-      // 结构化 Map 抽取统一关闭思考（提速 2.8x 且避免思考链占满输出上限）；Reduce 跟随客户端默认推理设置
-      const mapSingleConfig = GenerationConfig(
+      // 未显式指定 Effort 时，结构化 Map 抽取默认关闭思考（提速 2.8x 且防截断）；
+      // 若用户在扫描对话框显式选择了 Effort 档位，则尊重其选择；Reduce 跟随客户端默认推理设置。
+      final mapEffort = effortOverride ?? ReasoningEffort.none;
+      final mapSingleConfig = GenerationConfig(
         temperature: 0.2,
         maxTokens: 16384,
         jsonMode: true,
-        reasoningEffort: ReasoningEffort.none,
+        reasoningEffort: mapEffort,
         enablePromptCacheControl: true,
       );
-      const mapBatchConfig = GenerationConfig(
+      final mapBatchConfig = GenerationConfig(
         temperature: 0.2,
         maxTokens: 16384,
         jsonMode: false,
-        reasoningEffort: ReasoningEffort.none,
+        reasoningEffort: mapEffort,
         enablePromptCacheControl: true,
       );
       const reduceConfig = GenerationConfig(

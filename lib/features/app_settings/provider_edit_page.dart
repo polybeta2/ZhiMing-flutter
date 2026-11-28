@@ -5,10 +5,13 @@ import 'package:go_router/go_router.dart';
 import 'package:uuid/uuid.dart';
 
 import '../../core/database/app_database.dart';
+import '../../core/llm/llm_types.dart';
 import '../../core/llm/openai_sse_client.dart';
+import '../../core/llm/provider_client_factory.dart';
 import '../../core/prompts/prompt_limits.dart';
 import '../../core/security/api_key_vault.dart';
 import '../../core/theme/design_tokens.dart';
+import '../../core/widgets/effort_selector_bar.dart';
 import '../../core/widgets/zm_widgets.dart';
 
 class _ProviderPreset {
@@ -50,6 +53,7 @@ class _ProviderEditPageState extends ConsumerState<ProviderEditPage> {
   final _proxyCtrl = TextEditingController();
 
   double _temperature = 0.8;
+  ReasoningEffort? _defaultEffort;
   bool _isDefault = false;
   bool _obscureKey = true;
   bool _loading = false;
@@ -84,6 +88,7 @@ class _ProviderEditPageState extends ConsumerState<ProviderEditPage> {
       _proxyCtrl.text = found.proxyUrl ?? '';
       _temperature = found.temperature;
       _isDefault = found.isDefault;
+      _defaultEffort = ref.read(providerEffortOverridesProvider)[found.id];
       final key = await ref.read(apiKeyVaultProvider).load(found.apiKeyId);
       if (key != null) _apiKeyCtrl.text = key;
     }
@@ -138,8 +143,12 @@ class _ProviderEditPageState extends ConsumerState<ProviderEditPage> {
   Future<void> _fetchModels() async {
     setState(() => _fetchingModels = true);
     try {
-      final ids = await _buildPreviewClient().fetchModelIds();
+      final res = await _buildPreviewClient().fetchModelsWithCapabilities();
+      await ref
+          .read(effortDiscoveryProvider.notifier)
+          .seedFromModelsFetch(_baseUrlCtrl.text.trim(), res.capabilities);
       if (!mounted) return;
+      final ids = res.modelIds;
       if (ids.isEmpty) {
         showZmSnackBar(context, '接口返回了空的模型列表');
         return;
@@ -150,7 +159,7 @@ class _ProviderEditPageState extends ConsumerState<ProviderEditPage> {
         builder: (ctx) => _ModelPickerModal(modelIds: ids),
       );
       if (picked != null) {
-        _modelCtrl.text = picked;
+        setState(() => _modelCtrl.text = picked);
       }
     } catch (e) {
       if (mounted) showZmSnackBar(context, '拉取模型失败：$e', isError: true);
@@ -201,6 +210,9 @@ class _ProviderEditPageState extends ConsumerState<ProviderEditPage> {
     if (shouldBeDefault) {
       await db.makeDefaultProvider(id);
     }
+    await ref
+        .read(providerEffortOverridesProvider.notifier)
+        .setForProvider(id, _defaultEffort);
     if (mounted) {
       showZmSnackBar(context, '模型提供商已保存');
       context.pop();
@@ -414,6 +426,20 @@ class _ProviderEditPageState extends ConsumerState<ProviderEditPage> {
                                     setState(() => _temperature = v),
                               ),
                               const SizedBox(height: AppTokens.s2),
+                              EffortSelectorBar(
+                                title: '默认 Effort（努力程度）',
+                                value: _defaultEffort,
+                                rawBaseUrl: _baseUrlCtrl.text,
+                                rawApiKey: _apiKeyCtrl.text,
+                                rawModel: _modelCtrl.text,
+                                rawProxyUrl: _proxyCtrl.text.trim().isEmpty
+                                    ? null
+                                    : _proxyCtrl.text.trim(),
+                                followDefaultLabel: '跟随全局默认',
+                                onChanged: (v) =>
+                                    setState(() => _defaultEffort = v),
+                              ),
+                              const SizedBox(height: AppTokens.s3),
                               Row(
                                 children: [
                                   Expanded(

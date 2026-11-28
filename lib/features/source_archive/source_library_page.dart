@@ -4,10 +4,12 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../core/database/app_database.dart';
+import '../../core/llm/llm_types.dart';
 import '../../core/llm/provider_client_factory.dart';
 import '../../core/storage/blob_store.dart';
 import '../../core/theme/design_tokens.dart';
 import '../../core/utils/text_encoding.dart';
+import '../../core/widgets/effort_selector_bar.dart';
 import '../../core/widgets/zm_widgets.dart';
 import '../../domain/models/source_profile_models.dart';
 import 'source_injection_helper.dart';
@@ -57,6 +59,8 @@ class _SourceLibraryPageState extends ConsumerState<SourceLibraryPage> {
     var mode = ScanMode.evidence;
     var batchSize = 10;
     var concurrency = 6;
+    ReasoningEffort? effortOverride;
+    final activeProvider = ref.read(defaultProviderProvider);
 
     final start = await showDialog<bool>(
       context: context,
@@ -135,6 +139,13 @@ class _SourceLibraryPageState extends ConsumerState<SourceLibraryPage> {
                       },
                     ),
                   ],
+                  const SizedBox(height: 12),
+                  EffortSelectorBar(
+                    value: effortOverride,
+                    provider: activeProvider,
+                    compact: true,
+                    onChanged: (v) => setLocal(() => effortOverride = v),
+                  ),
                 ],
               ],
             ),
@@ -183,6 +194,7 @@ class _SourceLibraryPageState extends ConsumerState<SourceLibraryPage> {
         isContinuation: false,
         initialProvider: provider,
         fastProvider: ref.read(fastToolProviderProvider),
+        effortOverride: effortOverride,
       );
       if (mounted && profile != null) {
         showZmSnackBar(context, '已生成原作档案《${profile.title}》');
